@@ -1,29 +1,24 @@
 # Griya Hijau — Customer App (`apps/app_customer`)
 
-Aplikasi Android untuk calon pembeli properti **PT Rindang Alam (Griya Hijau)** (`applicationId: id.rindangalam.customer`).
+Aplikasi Android resmi untuk calon pembeli properti **PT Rindang Alam (Griya Hijau)**.
 
-## Daftar Fitur & Rute
+## Fitur Utama
 
-| Rute | Layar | Fitur Utama |
-|---|---|---|
-| `/` | `HomeScreen` | Hero promosi, pencarian cepat ke katalog, proyek unggulan, ringkasan & kontak kantor (`wa.me`) |
-| `/katalog` | `CatalogScreen` | Daftar kartu properti terpublikasi, pencarian dengan jeda `400ms`, filter kategori/kecamatan/harga/status, paginasi 20 item (`search_properties` + catat `search_logs`) |
-| `/properti/:slug` | `PropertyDetailScreen` | Galeri geser + zoom fullscreen (`photo_view`), 8 item spesifikasi, Simbol Mata + `record_property_view`, kalkulator KPR simulasi + disclaimer wajib, peta Google Maps & *Petunjuk Arah* |
-| `/properti/:slug/booking` | `BookingFormScreen` | Form booking tanpa pembayaran, validasi nomor WhatsApp `628xxx`, tujuan *Survei Lokasi* atau *Langsung Booking Unit* (`create_booking`) |
-| `/booking-berhasil` | `BookingSuccessScreen` | Kode booking unik (`BK-...`) dan CTA **Hubungi Admin via WhatsApp** |
-| `/tentang-kami` | `AboutScreen` | Profil perusahaan, visi & misi, statistik, serta tombol WhatsApp kantor |
+- **Beranda (`HomeScreen`)**: hero promosi, pencarian cepat ke katalog, daftar properti unggulan, dan kontak kantor.
+- **Katalog Properti (`CatalogScreen`)**: daftar properti terpublikasi dengan pencarian kata kunci, filter kategori/area/harga/status, serta paginasi.
+- **Detail Properti (`PropertyDetailScreen`)**: galeri foto interaktif dengan zoom, spesifikasi unit, kalkulator simulasi KPR, peta lokasi, dan tautan petunjuk arah.
+- **Formulir Booking (`BookingFormScreen`)**: pengajuan jadwal survei lokasi atau pemesanan unit.
+- **Konfirmasi Booking (`BookingSuccessScreen`)**: ringkasan kode booking dan pintasan hubungi admin via WhatsApp.
+- **Cek Booking (`CheckBookingScreen`)**: pencarian dan pemantauan progres status pengajuan booking.
+- **Tentang Kami (`AboutScreen`)**: profil perusahaan, visi dan misi, ringkasan layanan, serta kontak resmi.
 
-Semua layar data dilengkapi state *loading*, *empty*, dan *error* dengan tombol **Coba Lagi**.
+## Menjalankan & Menguji
 
-## Konfigurasi & Menjalankan
+Konfigurasi kunci runtime dan penandatanganan rilis disimpan pada berkas lokal yang diabaikan oleh `.gitignore`.
 
-1. **Google Maps API Key:** Pastikan `MAPS_API_KEY=...` terisi di `apps/app_customer/android/local.properties` (tidak di-*commit*). Saat dijalankan di Android (`main.dart` menyelesaikan `Supabase.initialize`), `EnvConfig.hasMapsApiKey` aktif otomatis kecuali di-override `--dart-define=DISABLE_GOOGLE_MAPS=true`.
-2. **Supabase Config:** Menggunakan `SUPABASE_URL` dan `SUPABASE_ANON_KEY` (opsional override lewat `--dart-define=SUPABASE_URL=... --dart-define=SUPABASE_ANON_KEY=...`). Jangan pernah menaruh `service_role` key.
-3. **Jalankan debug / test / APK rilis:**
-   ```powershell
-   flutter pub get
-   flutter analyze
-   flutter test
-   flutter build apk --release
-   ```
-   Untuk menandatangani rilis produksi, salin `android/key.properties.example` ke `android/key.properties` dan arahkan ke berkas `.jks` Anda.
+```powershell
+flutter pub get
+flutter analyze
+flutter test
+flutter build apk --release
+```
