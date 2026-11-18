@@ -1,0 +1,87 @@
+# Miscellaneous & OS temp files
+*.class
+*.log
+*.pyc
+*.swp
+*.tmp
+*.bak
+*.orig
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IDE & AI assistant local files
+*.iml
+*.ipr
+*.iws
+.idea/
+.vscode/
+.claude/
+.gemini/
+.agent/
+.cursor/
+AGENTS.md
+GEMINI.md
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/.pub-cache/
+**/.pub/
+**/Flutter/ephemeral/
+**/ios/Flutter/.last_build_id
+**/build/
+**/coverage/
+
+# Symbolication & Obfuscation
+app.*.symbols
+app.*.map.json
+
+# Release binaries
+*.apk
+*.aab
+*.ipa
+*.ap_
+
+# Android Studio / Gradle build & signing secrets
+**/android/app/debug
+**/android/app/profile
+**/android/app/release
+**/.gradle/
+**/.cxx/
+**/captures/
+**/GeneratedPluginRegistrant.java
+**/local.properties
+**/key.properties
+!*key.properties.example
+*.jks
+*.keystore
+
+# Environment & local secrets
+.env
+*.env
+.env.*
+!.env.example
+
+# Supabase CLI local state
+supabase/.temp/
+supabase/.branches/
+
+# Widget Preview related
+.widget_preview/
+
+# Local docs & AI notes
+docs/
+PRD/
+CLAUDE.md
+claude.md

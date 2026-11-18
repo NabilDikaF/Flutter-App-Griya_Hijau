@@ -1,0 +1,18 @@
+name: shared
+description: Paket bersama model data, tema Putih & Hijau Muda, konfigurasi, widget umum, dan utilitas untuk app_customer dan app_admin.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ^3.13.5
+
+dependencies:
+  flutter:
+    sdk: flutter
+  material_ui: ^1.1.0
+  intl: ^0.20.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
