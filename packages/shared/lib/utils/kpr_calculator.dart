@@ -44,9 +44,13 @@ abstract final class KprCalculator {
     double annualInterestRate = defaultAnnualInterestRate,
   }) {
     final int safePrice = math.max(0, propertyPrice);
-    final double safeDpPercent = dpPercent.clamp(0.0, 99.0).toDouble();
+    final double safeDpPercent =
+        dpPercent.isNaN ? 0.0 : dpPercent.clamp(0.0, 99.0).toDouble();
     final int safeTenorYears = math.max(1, tenorYears);
-    final double safeAnnualRate = math.max(0.0, annualInterestRate);
+    final double safeAnnualRate =
+        !annualInterestRate.isFinite || annualInterestRate <= 0
+            ? 0.0
+            : annualInterestRate;
 
     final int dpAmount = (safePrice * (safeDpPercent / 100.0)).round();
     final int loanPrincipal = math.max(0, safePrice - dpAmount);
@@ -57,13 +61,22 @@ abstract final class KprCalculator {
     if (loanPrincipal == 0) {
       monthlyInstallment = 0;
     } else if (monthlyRate <= 0) {
-      monthlyInstallment = (loanPrincipal / tenorMonths).round();
+      final double raw = loanPrincipal / tenorMonths;
+      monthlyInstallment = raw.isFinite ? raw.round() : 0;
     } else {
-      final num powFactor = math.pow(1.0 + monthlyRate, tenorMonths);
-      final double numerator = monthlyRate * powFactor.toDouble();
-      final double denominator = powFactor.toDouble() - 1.0;
-      monthlyInstallment =
-          denominator <= 0 ? 0 : (loanPrincipal * (numerator / denominator)).round();
+      final double powFactor =
+          math.pow(1.0 + monthlyRate, tenorMonths).toDouble();
+      final double rawInstallment;
+      if (!powFactor.isFinite) {
+        // As (1 + r)^n overflows double precision, annuity converges to P * r.
+        rawInstallment = loanPrincipal * monthlyRate;
+      } else {
+        final double denominator = powFactor - 1.0;
+        rawInstallment = denominator <= 0
+            ? 0.0
+            : loanPrincipal * ((monthlyRate * powFactor) / denominator);
+      }
+      monthlyInstallment = rawInstallment.isFinite ? rawInstallment.round() : 0;
     }
 
     return KprCalculationResult(

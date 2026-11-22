@@ -147,13 +147,17 @@ class _CatalogScreenState extends ConsumerState<CatalogScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final CustomerRepository repository = ref.watch(customerRepositoryProvider);
     final AsyncValue<CustomerBootstrapData> bootstrapAsync =
         ref.watch(customerBootstrapProvider);
-    final List<PropertyCategory> categories =
-        bootstrapAsync.asData?.value.categories ?? SeedData.categories;
-    final List<Location> locations =
-        bootstrapAsync.asData?.value.locations ?? SeedData.locations;
-    final CustomerRepository repository = ref.watch(customerRepositoryProvider);
+    final List<PropertyCategory> categories = bootstrapAsync.asData?.value.categories ??
+        (repository.isUsingLocalSeeder
+            ? SeedData.categories
+            : const <PropertyCategory>[]);
+    final List<Location> locations = bootstrapAsync.asData?.value.locations ??
+        (repository.isUsingLocalSeeder
+            ? SeedData.locations
+            : const <Location>[]);
 
     return CustomerScaffold(
       currentPath: '/katalog',
@@ -192,7 +196,9 @@ class _CatalogScreenState extends ConsumerState<CatalogScreen> {
                         imageUrl: repository.resolveImageUrl(
                           item.primaryImagePath,
                         ),
-                        onTap: () => context.push('/properti/${item.slug}'),
+                        onTap: () => context.push(
+                          '/properti/${Uri.encodeComponent(item.slug)}',
+                        ),
                       ),
                       const SizedBox(height: AppSpacing.lg),
                     ],

@@ -18,6 +18,24 @@ class BookingFormScreen extends ConsumerStatefulWidget {
   final String slug;
   final Property? initialProperty;
 
+  /// Memvalidasi bahwa tanggal & jam survei berada di masa depan dalam batas 180 hari.
+  static String? validateSurveyDateTime(
+    DateTime? candidate, {
+    DateTime? now,
+  }) {
+    if (candidate == null) {
+      return 'Silakan pilih tanggal & jam survei lokasi terlebih dahulu.';
+    }
+    final DateTime refNow = now ?? DateTime.now();
+    if (!candidate.isAfter(refNow)) {
+      return 'Tanggal & jam survei tidak boleh di masa lalu. Silakan pilih waktu yang akan datang.';
+    }
+    if (candidate.isAfter(refNow.add(const Duration(days: 180)))) {
+      return 'Tanggal pilihan survei maksimal 180 hari ke depan.';
+    }
+    return null;
+  }
+
   @override
   ConsumerState<BookingFormScreen> createState() => _BookingFormScreenState();
 }
@@ -92,7 +110,7 @@ class _BookingFormScreenState extends ConsumerState<BookingFormScreen> {
       context: context,
       initialDate: initialDate.isBefore(now) ? now : initialDate,
       firstDate: now,
-      lastDate: now.add(const Duration(days: 90)),
+      lastDate: now.add(const Duration(days: 180)),
     );
     if (pickedDate == null || !mounted) return;
 
@@ -100,37 +118,46 @@ class _BookingFormScreenState extends ConsumerState<BookingFormScreen> {
       context: context,
       initialTime: TimeOfDay.fromDateTime(initialDate),
     );
-    if (!mounted) return;
+    if (pickedTime == null || !mounted) return;
 
-    final TimeOfDay effectiveTime =
-        pickedTime ?? const TimeOfDay(hour: 10, minute: 0);
+    final DateTime candidate = DateTime(
+      pickedDate.year,
+      pickedDate.month,
+      pickedDate.day,
+      pickedTime.hour,
+      pickedTime.minute,
+    );
+    final String? validationError =
+        BookingFormScreen.validateSurveyDateTime(candidate);
+    if (validationError != null) {
+      setState(() => _submitError = validationError);
+      return;
+    }
+
     setState(() {
-      _preferredSurveyDate = DateTime(
-        pickedDate.year,
-        pickedDate.month,
-        pickedDate.day,
-        effectiveTime.hour,
-        effectiveTime.minute,
-      );
+      _preferredSurveyDate = candidate;
       _submitError = null;
     });
   }
 
   Future<void> _submit() async {
-    final Property? property = _property;
-    if (property == null) return;
+    final Property? raw = _property;
+    if (raw == null || !raw.isPublished || !(raw.category?.isActive ?? false)) {
+      return;
+    }
+    final Property property = raw;
 
     setState(() => _submitError = null);
     if (!_formKey.currentState!.validate()) {
       return;
     }
-    if (_intentType == IntentType.surveyLocation &&
-        _preferredSurveyDate == null) {
-      setState(() {
-        _submitError =
-            'Silakan pilih tanggal & jam survei lokasi terlebih dahulu.';
-      });
-      return;
+    if (_intentType == IntentType.surveyLocation) {
+      final String? surveyError =
+          BookingFormScreen.validateSurveyDateTime(_preferredSurveyDate);
+      if (surveyError != null) {
+        setState(() => _submitError = surveyError);
+        return;
+      }
     }
 
     setState(() => _isSubmitting = true);
@@ -177,10 +204,15 @@ class _BookingFormScreenState extends ConsumerState<BookingFormScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final Property? property = _property;
+    final Property? raw = _property;
+    final Property? property = (raw != null &&
+            raw.isPublished &&
+            (raw.category?.isActive ?? false))
+        ? raw
+        : null;
 
     return CustomerScaffold(
-      currentPath: '/properti/${widget.slug}/booking',
+      currentPath: '/properti/${Uri.encodeComponent(widget.slug)}/booking',
       title: 'Formulir Booking',
       showBackButton: true,
       body: _isLoadingProperty
@@ -213,7 +245,7 @@ class _BookingFormScreenState extends ConsumerState<BookingFormScreen> {
               children: <Widget>[
                 Row(
                   children: <Widget>[
-                    CategoryBadge(label: property.category?.name ?? 'Properti'),
+                    CategoryBadge(label: property.category!.name),
                     const SizedBox(width: AppSpacing.sm),
                     AvailabilityBadge(status: property.availabilityStatus),
                   ],

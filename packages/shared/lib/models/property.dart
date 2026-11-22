@@ -80,11 +80,13 @@ class Property {
             .toList()
         : const <PropertyImage>[];
 
-    parsedImages.sort((PropertyImage a, PropertyImage b) {
-      if (a.isPrimary != b.isPrimary) return a.isPrimary ? -1 : 1;
-      final int byOrder = a.sortOrder.compareTo(b.sortOrder);
-      return byOrder != 0 ? byOrder : a.id.compareTo(b.id);
-    });
+    if (parsedImages.length > 1) {
+      parsedImages.sort((PropertyImage a, PropertyImage b) {
+        if (a.isPrimary != b.isPrimary) return a.isPrimary ? -1 : 1;
+        final int byOrder = a.sortOrder.compareTo(b.sortOrder);
+        return byOrder != 0 ? byOrder : a.id.compareTo(b.id);
+      });
+    }
 
     return Property(
       id: (json['id'] as num).toInt(),
@@ -145,8 +147,8 @@ class Property {
       'availability_status': availabilityStatus.value,
       'views_count': viewsCount,
       'is_published': isPublished,
-      if (createdAt != null) 'created_at': createdAt!.toIso8601String(),
-      if (updatedAt != null) 'updated_at': updatedAt!.toIso8601String(),
+      if (createdAt != null) 'created_at': createdAt!.toUtc().toIso8601String(),
+      if (updatedAt != null) 'updated_at': updatedAt!.toUtc().toIso8601String(),
     };
   }
 }

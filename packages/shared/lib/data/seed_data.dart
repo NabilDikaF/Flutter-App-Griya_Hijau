@@ -55,7 +55,7 @@ abstract final class SeedData {
     ),
   ];
 
-  static final List<Property> properties = <Property>[
+  static final List<Property> properties = List<Property>.unmodifiable(<Property>[
     Property(
       id: 1,
       propertyCategoryId: 1,
@@ -378,7 +378,7 @@ abstract final class SeedData {
         ),
       ],
     ),
-  ];
+  ]);
 
   static List<PropertySummary> get publishedSummaries {
     final List<Property> published =

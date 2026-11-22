@@ -60,29 +60,42 @@ class _PropertyDetailScreenState extends ConsumerState<PropertyDetailScreen> {
       _error = null;
     });
 
+    Property? fetched;
     try {
-      final Property? fetched = await repository.getPropertyBySlug(widget.slug);
-      if (!mounted) return;
-      setState(() {
-        _property = fetched;
-        _viewsCount = fetched?.viewsCount;
-        _isLoading = false;
-      });
-
-      if (fetched != null && _recordedPropertyId != fetched.id) {
-        _recordedPropertyId = fetched.id;
-        final int? updatedCount =
-            await repository.recordPropertyView(fetched.id);
-        if (mounted && updatedCount != null) {
-          setState(() => _viewsCount = updatedCount);
-        }
-      }
+      fetched = await repository.getPropertyBySlug(widget.slug);
     } catch (error) {
       if (!mounted) return;
       setState(() {
         _error = error;
         _isLoading = false;
       });
+      return;
+    }
+
+    final Property? visibleProperty = (fetched != null &&
+            fetched.isPublished &&
+            (fetched.category?.isActive ?? false))
+        ? fetched
+        : null;
+
+    if (!mounted) return;
+    setState(() {
+      _property = visibleProperty;
+      _viewsCount = visibleProperty?.viewsCount;
+      _isLoading = false;
+    });
+
+    if (visibleProperty != null && _recordedPropertyId != visibleProperty.id) {
+      _recordedPropertyId = visibleProperty.id;
+      try {
+        final int? updatedCount =
+            await repository.recordPropertyView(visibleProperty.id);
+        if (mounted && updatedCount != null) {
+          setState(() => _viewsCount = updatedCount);
+        }
+      } catch (_) {
+        // Kegagalan pencatatan view tidak boleh menggagalkan tampilan detail properti.
+      }
     }
   }
 
@@ -100,11 +113,16 @@ class _PropertyDetailScreenState extends ConsumerState<PropertyDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final Property? property = _property;
+    final Property? raw = _property;
+    final Property? property = (raw != null &&
+            raw.isPublished &&
+            (raw.category?.isActive ?? false))
+        ? raw
+        : null;
     final CustomerRepository repository = ref.watch(customerRepositoryProvider);
 
     return CustomerScaffold(
-      currentPath: '/properti/${widget.slug}',
+      currentPath: '/properti/${Uri.encodeComponent(widget.slug)}',
       title: property?.title ?? 'Detail Properti',
       showBackButton: true,
       bottomNavigationBar: property == null
@@ -112,7 +130,7 @@ class _PropertyDetailScreenState extends ConsumerState<PropertyDetailScreen> {
           : _StickyBookingBar(
               property: property,
               onBookingPressed: () => context.push(
-                '/properti/${property.slug}/booking',
+                '/properti/${Uri.encodeComponent(property.slug)}/booking',
                 extra: property,
               ),
             ),
@@ -155,7 +173,7 @@ class _PropertyDetailScreenState extends ConsumerState<PropertyDetailScreen> {
                 runSpacing: AppSpacing.xs,
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: <Widget>[
-                  CategoryBadge(label: property.category?.name ?? 'Properti'),
+                  CategoryBadge(label: property.category!.name),
                   AvailabilityBadge(status: property.availabilityStatus),
                   ViewsBadge(viewsCount: viewsCount),
                 ],

@@ -100,6 +100,47 @@ void main() {
       expect(property.toJson()['views_count'], 12);
     });
 
+    test('Property.fromJson handles null or non-List property_images without throwing', () {
+      final Map<String, dynamic> base = <String, dynamic>{
+        'id': 11,
+        'property_category_id': 1,
+        'location_id': 1,
+        'title': 'Griya Tanpa Foto',
+        'slug': 'griya-tanpa-foto',
+        'price': 500000000,
+      };
+
+      final Property withNull = Property.fromJson(<String, dynamic>{
+        ...base,
+        'property_images': null,
+      });
+      final Property withString = Property.fromJson(<String, dynamic>{
+        ...base,
+        'property_images': 'invalid',
+      });
+
+      expect(withNull.images, isEmpty);
+      expect(withString.images, isEmpty);
+    });
+
+    test('PropertyCategory.fromJson defaults isActive to false when is_active is omitted', () {
+      final PropertyCategory omitted = PropertyCategory.fromJson(<String, dynamic>{
+        'id': 3,
+        'name': 'Kavling',
+        'slug': 'kavling',
+      });
+      final PropertyCategory explicitTrue =
+          PropertyCategory.fromJson(<String, dynamic>{
+        'id': 4,
+        'name': 'Ruko',
+        'slug': 'ruko',
+        'is_active': true,
+      });
+
+      expect(omitted.isActive, isFalse);
+      expect(explicitTrue.isActive, isTrue);
+    });
+
     test('Booking and BookingCreateInput map schema and RPC params', () {
       final Booking booking = Booking.fromJson(<String, dynamic>{
         'id': 5,
@@ -128,7 +169,121 @@ void main() {
       expect(params['p_payment_plan'], 'kpr');
     });
 
-    test('SeedData provides 2 categories, 5 locations, 6 published + 2 unpublished properties', () {
+    test('Booking.fromJson parses Stage-1 check_booking_status payload without customer_whatsapp or admin_notes', () {
+      final Booking stage1 = Booking.fromJson(<String, dynamic>{
+        'id': 7,
+        'booking_code': 'BK-20261122-0123456789ABCDEF',
+        'property_id': 1,
+        'customer_name': 'Rina Marlina',
+        'intent_type': 'survey_location',
+        'preferred_survey_date': '2026-11-23T03:00:00Z',
+        'funnel_status': 'survey_scheduled',
+        'created_at': '2026-11-22T01:00:00Z',
+        'updated_at': '2026-11-22T02:00:00Z',
+      });
+
+      expect(stage1.customerWhatsapp, isEmpty);
+      expect(stage1.adminNotes, isNull);
+      expect(stage1.funnelStatus, FunnelStatus.surveyScheduled);
+    });
+
+    test('All models and BookingCreateInput serialize DateTime fields as UTC ISO-8601', () {
+      final DateTime localDt = DateTime(2026, 11, 22, 14, 30);
+
+      final Property property = Property(
+        id: 1,
+        propertyCategoryId: 1,
+        locationId: 1,
+        title: 'A',
+        slug: 'a',
+        price: 100,
+        availabilityStatus: AvailabilityStatus.available,
+        viewsCount: 0,
+        isPublished: true,
+        createdAt: localDt,
+        updatedAt: localDt,
+      );
+      expect(property.toJson()['created_at'], endsWith('Z'));
+      expect(property.toJson()['updated_at'], endsWith('Z'));
+
+      final PropertyCategory category = PropertyCategory(
+        id: 1,
+        name: 'Rumah',
+        slug: 'rumah',
+        isActive: true,
+        createdAt: localDt,
+        updatedAt: localDt,
+      );
+      expect(category.toJson()['created_at'], endsWith('Z'));
+      expect(category.toJson()['updated_at'], endsWith('Z'));
+
+      final Location location = Location(
+        id: 1,
+        city: 'Bandung',
+        district: 'Sukamaju',
+        slug: 'bandung-sukamaju',
+        createdAt: localDt,
+        updatedAt: localDt,
+      );
+      expect(location.toJson()['created_at'], endsWith('Z'));
+      expect(location.toJson()['updated_at'], endsWith('Z'));
+
+      final PropertyImage image = PropertyImage(
+        id: 1,
+        propertyId: 1,
+        imagePath: 'properties/1/a.jpg',
+        isPrimary: true,
+        sortOrder: 0,
+        createdAt: localDt,
+        updatedAt: localDt,
+      );
+      expect(image.toJson()['created_at'], endsWith('Z'));
+      expect(image.toJson()['updated_at'], endsWith('Z'));
+
+      final Booking booking = Booking(
+        id: 1,
+        bookingCode: 'BK-20261122-0123456789ABCDEF',
+        propertyId: 1,
+        customerName: 'Budi',
+        customerWhatsapp: '6281234567890',
+        intentType: IntentType.surveyLocation,
+        preferredSurveyDate: localDt,
+        confirmedSurveyDate: localDt,
+        funnelStatus: FunnelStatus.newLead,
+        createdAt: localDt,
+        updatedAt: localDt,
+      );
+      final Map<String, dynamic> bookingJson = booking.toJson();
+      expect(bookingJson['preferred_survey_date'], endsWith('Z'));
+      expect(bookingJson['confirmed_survey_date'], endsWith('Z'));
+      expect(bookingJson['created_at'], endsWith('Z'));
+      expect(bookingJson['updated_at'], endsWith('Z'));
+
+      final BookingCreateInput input = BookingCreateInput(
+        propertyId: 1,
+        customerName: 'Budi',
+        customerWhatsapp: '6281234567890',
+        intentType: IntentType.surveyLocation,
+        preferredSurveyDate: localDt,
+      );
+      expect(input.toRpcParams()['p_preferred_survey_date'], endsWith('Z'));
+
+      final PropertyViewLog viewLog = PropertyViewLog(
+        id: 1,
+        propertyId: 1,
+        viewedAt: localDt,
+      );
+      expect(viewLog.toJson()['viewed_at'], endsWith('Z'));
+
+      final SearchLog searchLog = SearchLog(
+        id: 1,
+        resultsCount: 3,
+        searchedAt: localDt,
+      );
+      expect(searchLog.toJson()['searched_at'], endsWith('Z'));
+    });
+
+    test('SeedData provides unmodifiable properties list and expected seed counts', () {
       expect(SeedData.categories, hasLength(2));
       expect(SeedData.locations, hasLength(5));
       expect(SeedData.properties, hasLength(8));
@@ -136,6 +291,10 @@ void main() {
       expect(
         SeedData.properties.where((Property p) => !p.isPublished),
         hasLength(2),
+      );
+      expect(
+        () => SeedData.properties.add(SeedData.properties.first),
+        throwsUnsupportedError,
       );
     });
   });

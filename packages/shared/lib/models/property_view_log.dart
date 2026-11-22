@@ -30,7 +30,7 @@ class PropertyViewLog {
       'property_id': propertyId,
       'ip_address': ipAddress,
       'user_agent': userAgent,
-      'viewed_at': viewedAt.toIso8601String(),
+      'viewed_at': viewedAt.toUtc().toIso8601String(),
     };
   }
 }

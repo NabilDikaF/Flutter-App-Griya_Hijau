@@ -34,7 +34,7 @@ class SearchLog {
       'location_id': locationId,
       'property_category_id': propertyCategoryId,
       'results_count': resultsCount,
-      'searched_at': searchedAt.toIso8601String(),
+      'searched_at': searchedAt.toUtc().toIso8601String(),
     };
   }
 }

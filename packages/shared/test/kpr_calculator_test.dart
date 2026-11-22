@@ -34,6 +34,46 @@ void main() {
       expect(result.tenorMonths, 120);
       expect(result.monthlyInstallment, 4000000);
     });
+
+    test('handles NaN, Infinity, negative infinity, and pow overflow without throwing', () {
+      final KprCalculationResult nanInputs = KprCalculator.calculate(
+        propertyPrice: 800000000,
+        dpPercent: double.nan,
+        tenorYears: 15,
+        annualInterestRate: double.nan,
+      );
+      expect(nanInputs.dpPercent, 0.0);
+      expect(nanInputs.annualInterestRate, 0.0);
+      expect(nanInputs.monthlyInstallment, (800000000 / 180).round());
+
+      final KprCalculationResult infRate = KprCalculator.calculate(
+        propertyPrice: 800000000,
+        dpPercent: double.infinity,
+        tenorYears: 10,
+        annualInterestRate: double.infinity,
+      );
+      expect(infRate.dpPercent, 99.0);
+      expect(infRate.annualInterestRate, 0.0);
+      expect(infRate.monthlyInstallment, (8000000 / 120).round());
+
+      final KprCalculationResult negInf = KprCalculator.calculate(
+        propertyPrice: 800000000,
+        dpPercent: double.negativeInfinity,
+        tenorYears: 0,
+        annualInterestRate: double.negativeInfinity,
+      );
+      expect(negInf.dpPercent, 0.0);
+      expect(negInf.tenorMonths, 12);
+      expect(negInf.monthlyInstallment, (800000000 / 12).round());
+
+      final KprCalculationResult powOverflow = KprCalculator.calculate(
+        propertyPrice: 800000000,
+        dpPercent: 20,
+        tenorYears: 5000,
+        annualInterestRate: 50,
+      );
+      expect(powOverflow.monthlyInstallment, greaterThan(0));
+    });
   });
 
   group('KprCalculatorCard widget', () {

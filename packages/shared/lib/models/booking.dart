@@ -41,7 +41,7 @@ class Booking {
       bookingCode: json['booking_code'] as String,
       propertyId: (json['property_id'] as num).toInt(),
       customerName: json['customer_name'] as String,
-      customerWhatsapp: json['customer_whatsapp'] as String,
+      customerWhatsapp: (json['customer_whatsapp'] as String?) ?? '',
       intentType: IntentType.fromValue(json['intent_type'] as String),
       preferredSurveyDate: _parseDateTime(json['preferred_survey_date']),
       confirmedSurveyDate: _parseDateTime(json['confirmed_survey_date']),
@@ -65,14 +65,14 @@ class Booking {
       'customer_name': customerName,
       'customer_whatsapp': customerWhatsapp,
       'intent_type': intentType.value,
-      'preferred_survey_date': preferredSurveyDate?.toIso8601String(),
-      'confirmed_survey_date': confirmedSurveyDate?.toIso8601String(),
+      'preferred_survey_date': preferredSurveyDate?.toUtc().toIso8601String(),
+      'confirmed_survey_date': confirmedSurveyDate?.toUtc().toIso8601String(),
       'payment_plan': paymentPlan?.value,
       'customer_notes': customerNotes,
       'funnel_status': funnelStatus.value,
       'admin_notes': adminNotes,
-      if (createdAt != null) 'created_at': createdAt!.toIso8601String(),
-      if (updatedAt != null) 'updated_at': updatedAt!.toIso8601String(),
+      if (createdAt != null) 'created_at': createdAt!.toUtc().toIso8601String(),
+      if (updatedAt != null) 'updated_at': updatedAt!.toUtc().toIso8601String(),
     };
   }
 }
@@ -103,7 +103,7 @@ class BookingCreateInput {
       'p_customer_name': customerName,
       'p_customer_whatsapp': customerWhatsapp,
       'p_intent_type': intentType.value,
-      'p_preferred_survey_date': preferredSurveyDate?.toIso8601String(),
+      'p_preferred_survey_date': preferredSurveyDate?.toUtc().toIso8601String(),
       'p_payment_plan': paymentPlan?.value,
       'p_customer_notes': customerNotes,
     };

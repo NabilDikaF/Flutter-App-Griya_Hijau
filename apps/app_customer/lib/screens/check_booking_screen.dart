@@ -24,6 +24,7 @@ class CheckBookingScreen extends ConsumerStatefulWidget {
 }
 
 class _CheckBookingScreenState extends ConsumerState<CheckBookingScreen> {
+  final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   final TextEditingController _codeController = TextEditingController();
   final TextEditingController _whatsappController = TextEditingController();
 
@@ -58,13 +59,12 @@ class _CheckBookingScreenState extends ConsumerState<CheckBookingScreen> {
   void _applyInitialParams({required bool triggerLookup}) {
     final String code = (widget.initialCode ?? '').trim();
     final String wa = (widget.initialWhatsapp ?? '').trim();
-    if (code.isNotEmpty) {
-      _codeController.text = code;
-    }
-    if (wa.isNotEmpty) {
-      _whatsappController.text = wa;
-    }
-    if (triggerLookup && (code.isNotEmpty || wa.isNotEmpty)) {
+    _codeController.text = code;
+    _whatsappController.text = wa;
+    _results = const <CustomerBookingLookupResult>[];
+    _hasSearched = false;
+    _errorMessage = null;
+    if (triggerLookup && code.isNotEmpty && wa.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           _performLookup();
@@ -74,15 +74,13 @@ class _CheckBookingScreenState extends ConsumerState<CheckBookingScreen> {
   }
 
   Future<void> _performLookup() async {
-    final String code = _codeController.text.trim();
-    final String wa = _whatsappController.text.trim();
-    if (code.isEmpty && wa.isEmpty) {
-      setState(() {
-        _errorMessage =
-            'Masukkan kode booking atau nomor WhatsApp untuk mengecek status.';
-      });
+    if (!(_formKey.currentState?.validate() ?? false)) {
+      setState(() => _errorMessage = null);
       return;
     }
+
+    final String code = _codeController.text.trim();
+    final String wa = _whatsappController.text.trim();
 
     FocusScope.of(context).unfocus();
     setState(() {
@@ -107,7 +105,9 @@ class _CheckBookingScreenState extends ConsumerState<CheckBookingScreen> {
       if (!mounted) return;
       setState(() {
         _isLoading = false;
-        _errorMessage = error.toString().replaceFirst('Exception: ', '');
+        _errorMessage = error is ArgumentError
+            ? '${error.message}'
+            : error.toString().replaceFirst('Exception: ', '');
       });
     }
   }
@@ -159,25 +159,22 @@ class _CheckBookingScreenState extends ConsumerState<CheckBookingScreen> {
                     iconColor: AppColors.slate500,
                     title: 'Data booking tidak ditemukan',
                     message:
-                        'Periksa kembali kode booking (mis. BK-20261114-DEMO1) atau nomor WhatsApp yang Anda gunakan saat pengajuan.',
+                        'Pastikan kombinasi kode booking dan nomor WhatsApp sesuai dengan data pengajuan Anda.',
                   )
                 else if (_hasSearched)
                   ..._results.expand((CustomerBookingLookupResult item) {
-                    final bool isMaskedCode =
-                        item.booking.bookingCode.contains('*');
-                    final String whatsappMessage = isMaskedCode
-                        ? 'Halo admin ${CompanyConfig.brandName}, saya ingin menanyakan tindak lanjut booking untuk unit *${item.propertyTitle}*.'
-                        : 'Halo admin ${CompanyConfig.brandName}, saya ingin menanyakan tindak lanjut booking dengan kode *${item.booking.bookingCode}* untuk unit *${item.propertyTitle}*.';
+                    final String whatsappMessage =
+                        'Halo admin ${CompanyConfig.brandName}, saya ingin menanyakan tindak lanjut booking dengan kode *${item.booking.bookingCode}* untuk unit *${item.propertyTitle}*.';
                     return <Widget>[
                       _BookingResultCard(
                         item: item,
-                        onCopyCode: isMaskedCode
-                            ? null
-                            : () => _copyBookingCode(item.booking.bookingCode),
+                        onCopyCode: () =>
+                            _copyBookingCode(item.booking.bookingCode),
                         onOpenProperty: item.propertySlug.isEmpty
                             ? null
-                            : () => context
-                                .push('/properti/${item.propertySlug}'),
+                            : () => context.push(
+                                  '/properti/${Uri.encodeComponent(item.propertySlug)}',
+                                ),
                         onOpenWhatsapp: () {
                           ExternalLauncher.openWhatsapp(
                             context,
@@ -196,7 +193,7 @@ class _CheckBookingScreenState extends ConsumerState<CheckBookingScreen> {
                     iconColor: AppColors.emerald800,
                     title: 'Cara mengecek status pengajuan',
                     message:
-                        'Masukkan kode booking yang Anda terima setelah mengirim form (contoh: BK-20261114-DEMO1) atau masukkan nomor WhatsApp Anda.',
+                        'Masukkan kode booking dan nomor WhatsApp yang Anda gunakan saat pengajuan.',
                   ),
               ],
             ),
@@ -281,108 +278,133 @@ class _CheckBookingScreenState extends ConsumerState<CheckBookingScreen> {
       ),
       child: Padding(
         padding: const EdgeInsets.all(18),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: <Widget>[
-            Text(
-              'Cari pengajuan Anda',
-              style: AppTypography.h3.copyWith(
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-                color: AppColors.slate900,
+        child: Form(
+          key: _formKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Text(
+                'Cari pengajuan Anda',
+                style: AppTypography.h3.copyWith(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.slate900,
+                ),
               ),
-            ),
-            const SizedBox(height: AppSpacing.md),
-            Text('Kode booking', style: labelStyle),
-            const SizedBox(height: AppSpacing.fieldGap),
-            TextFormField(
-              key: const Key('check_booking_code_input'),
-              controller: _codeController,
-              textCapitalization: TextCapitalization.characters,
-              textInputAction: TextInputAction.next,
-              style: AppTypography.bodyNormal.copyWith(
-                color: AppColors.slate900,
+              const SizedBox(height: AppSpacing.md),
+              Text('Kode booking *', style: labelStyle),
+              const SizedBox(height: AppSpacing.fieldGap),
+              TextFormField(
+                key: const Key('check_booking_code_input'),
+                controller: _codeController,
+                textCapitalization: TextCapitalization.characters,
+                textInputAction: TextInputAction.next,
+                style: AppTypography.bodyNormal.copyWith(
+                  color: AppColors.slate900,
+                ),
+                decoration:
+                    _lookupInputDecoration('Contoh: BK-20261122-A1B2C3D4E5F60718'),
+                validator: (String? value) {
+                  final String trimmed = (value ?? '').trim();
+                  if (trimmed.isEmpty) {
+                    return 'Kode booking wajib diisi.';
+                  }
+                  if (!CustomerRepository.isValidBookingCode(trimmed)) {
+                    return 'Format kode booking tidak valid (contoh: BK-20261122-A1B2C3D4E5F60718).';
+                  }
+                  return null;
+                },
+                onFieldSubmitted: (_) => FocusScope.of(context).nextFocus(),
               ),
-              decoration: _lookupInputDecoration('BK-20261114-DEMO1'),
-              onFieldSubmitted: (_) => _performLookup(),
-            ),
-            if (isLocalMode) ...<Widget>[
-              const SizedBox(height: AppSpacing.sm),
-              Wrap(
-                spacing: AppSpacing.sm,
-                runSpacing: AppSpacing.xs,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: <Widget>[
-                  Text(
-                    'Contoh kode:',
-                    style: AppTypography.captionRegular.copyWith(
-                      color: AppColors.slate600,
-                    ),
-                  ),
-                  InkWell(
-                    key: const Key('check_booking_demo_chip'),
-                    onTap: () {
-                      _codeController.text = 'BK-20261114-DEMO1';
-                      _performLookup();
-                    },
-                    borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 5,
-                      ),
-                      decoration: BoxDecoration(
-                        color: AppColors.emerald50,
-                        borderRadius: BorderRadius.circular(
-                          AppSpacing.radiusPill,
-                        ),
-                        border: Border.all(color: AppColors.emerald200),
-                      ),
-                      child: Text(
-                        'BK-20261114-DEMO1',
-                        style: AppTypography.caption.copyWith(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.emerald800,
-                        ),
+              if (isLocalMode) ...<Widget>[
+                const SizedBox(height: AppSpacing.sm),
+                Wrap(
+                  spacing: AppSpacing.sm,
+                  runSpacing: AppSpacing.xs,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: <Widget>[
+                    Text(
+                      'Contoh kode & WA:',
+                      style: AppTypography.captionRegular.copyWith(
+                        color: AppColors.slate600,
                       ),
                     ),
+                    InkWell(
+                      key: const Key('check_booking_demo_chip'),
+                      onTap: () {
+                        _codeController.text = 'BK-20261114-DEMO1';
+                        _whatsappController.text = '081234567890';
+                        _performLookup();
+                      },
+                      borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 5,
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppColors.emerald50,
+                          borderRadius: BorderRadius.circular(
+                            AppSpacing.radiusPill,
+                          ),
+                          border: Border.all(color: AppColors.emerald200),
+                        ),
+                        child: Text(
+                          'BK-20261114-DEMO1 • 081234567890',
+                          style: AppTypography.caption.copyWith(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.emerald800,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+              const SizedBox(height: AppSpacing.md),
+              Text('Nomor WhatsApp *', style: labelStyle),
+              const SizedBox(height: AppSpacing.fieldGap),
+              TextFormField(
+                key: const Key('check_booking_wa_input'),
+                controller: _whatsappController,
+                keyboardType: TextInputType.phone,
+                textInputAction: TextInputAction.search,
+                style: AppTypography.bodyNormal.copyWith(
+                  color: AppColors.slate900,
+                ),
+                decoration: _lookupInputDecoration('Contoh: 081234567890'),
+                validator: (String? value) {
+                  final String trimmed = (value ?? '').trim();
+                  if (trimmed.isEmpty) {
+                    return 'Nomor WhatsApp wajib diisi.';
+                  }
+                  if (!CustomerRepository.isValidWhatsapp(trimmed)) {
+                    return 'Format nomor WhatsApp tidak valid (gunakan awalan 08 atau 628, 11-15 digit).';
+                  }
+                  return null;
+                },
+                onFieldSubmitted: (_) => _performLookup(),
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              ElevatedButton(
+                key: const Key('check_booking_submit_button'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.emerald500,
+                  foregroundColor: AppColors.white,
+                  minimumSize: const Size(0, 46),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
                   ),
-                ],
+                  textStyle: AppTypography.buttonLabel.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                onPressed: _isLoading ? null : _performLookup,
+                child: const Text('Cek status booking'),
               ),
             ],
-            const SizedBox(height: AppSpacing.md),
-            Text('Nomor WhatsApp (opsional)', style: labelStyle),
-            const SizedBox(height: AppSpacing.fieldGap),
-            TextFormField(
-              key: const Key('check_booking_wa_input'),
-              controller: _whatsappController,
-              keyboardType: TextInputType.phone,
-              textInputAction: TextInputAction.search,
-              style: AppTypography.bodyNormal.copyWith(
-                color: AppColors.slate900,
-              ),
-              decoration: _lookupInputDecoration('Contoh: 081234567890'),
-              onFieldSubmitted: (_) => _performLookup(),
-            ),
-            const SizedBox(height: AppSpacing.lg),
-            ElevatedButton(
-              key: const Key('check_booking_submit_button'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.emerald500,
-                foregroundColor: AppColors.white,
-                minimumSize: const Size(0, 46),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-                ),
-                textStyle: AppTypography.buttonLabel.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              onPressed: _isLoading ? null : _performLookup,
-              child: const Text('Cek status booking'),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -519,11 +541,6 @@ class _BookingResultCard extends StatelessWidget {
             ),
             const SizedBox(height: AppSpacing.md),
             _DetailRow(label: 'Nama pemohon', value: booking.customerName),
-            const Divider(height: 18, color: AppColors.slate100),
-            _DetailRow(
-              label: 'Nomor WhatsApp',
-              value: booking.customerWhatsapp,
-            ),
             const Divider(height: 18, color: AppColors.slate100),
             _DetailRow(
               label: 'Tujuan',

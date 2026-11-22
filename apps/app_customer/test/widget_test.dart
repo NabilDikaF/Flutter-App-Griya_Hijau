@@ -1,7 +1,10 @@
+import 'package:app_customer/core/env_config.dart';
 import 'package:app_customer/core/external_launcher.dart';
+import 'package:app_customer/data/customer_repository.dart';
 import 'package:app_customer/main.dart';
 import 'package:app_customer/screens/about_screen.dart';
 import 'package:app_customer/screens/booking_form_screen.dart';
+import 'package:app_customer/screens/booking_success_screen.dart';
 import 'package:app_customer/screens/catalog_screen.dart';
 import 'package:app_customer/screens/check_booking_screen.dart';
 import 'package:app_customer/screens/property_detail_screen.dart';
@@ -11,9 +14,48 @@ import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared/shared.dart';
 
-Widget _wrapWithRouter(Widget child) {
+class _FailingViewCustomerRepository extends CustomerRepository {
+  const _FailingViewCustomerRepository() : super(null);
+
+  @override
+  Future<int?> recordPropertyView(int propertyId) async {
+    throw Exception('Simulated view failure');
+  }
+}
+
+class _InactiveCategoryPropertyRepository extends CustomerRepository {
+  const _InactiveCategoryPropertyRepository() : super(null);
+
+  @override
+  Future<Property?> getPropertyBySlug(String slug) async {
+    return Property(
+      id: 99,
+      propertyCategoryId: 99,
+      locationId: 1,
+      title: 'Properti Kategori Nonaktif',
+      slug: slug,
+      price: 750000000,
+      availabilityStatus: AvailabilityStatus.available,
+      viewsCount: 5,
+      isPublished: true,
+      category: const PropertyCategory(
+        id: 99,
+        name: 'Kategori Nonaktif',
+        slug: 'kategori-nonaktif',
+        isActive: false,
+      ),
+      location: SeedData.locations.first,
+    );
+  }
+}
+
+Widget _wrapWithRouter(
+  Widget child, {
+  CustomerRepository? repositoryOverride,
+  String initialLocation = '/',
+}) {
   final GoRouter router = GoRouter(
-    initialLocation: '/',
+    initialLocation: initialLocation,
     routes: <RouteBase>[
       GoRoute(path: '/', builder: (_, _) => child),
       GoRoute(path: '/katalog', builder: (_, _) => const CatalogScreen()),
@@ -38,9 +80,20 @@ Widget _wrapWithRouter(Widget child) {
               state.extra is Property ? state.extra as Property : null,
         ),
       ),
+      GoRoute(
+        path: '/booking-berhasil',
+        builder: (_, GoRouterState state) => BookingSuccessScreen(
+          args: state.extra is BookingSuccessArgs
+              ? state.extra as BookingSuccessArgs
+              : null,
+        ),
+      ),
     ],
   );
   return ProviderScope(
+    overrides: repositoryOverride != null
+        ? [customerRepositoryProvider.overrideWithValue(repositoryOverride)]
+        : const [],
     child: MaterialApp.router(
       theme: AppTheme.lightTheme,
       routerConfig: router,
@@ -279,7 +332,7 @@ void main() {
     }
   });
 
-  testWidgets('CheckBookingScreen looks up BK-20261114-DEMO1 via bottom nav tab and renders status details', (
+  testWidgets('CheckBookingScreen looks up booking with both code + WA and hides customer_whatsapp row', (
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(const ProviderScope(child: CustomerApp()));
@@ -299,6 +352,10 @@ void main() {
       find.byKey(const Key('check_booking_code_input')),
       'BK-20261114-DEMO1',
     );
+    await tester.enterText(
+      find.byKey(const Key('check_booking_wa_input')),
+      '081234567890',
+    );
     await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const Key('check_booking_submit_button')));
@@ -307,6 +364,8 @@ void main() {
     expect(find.text('Jadwal survei'), findsOneWidget);
     expect(find.text('Griya Hijau Residence Tipe 45/84'), findsOneWidget);
     expect(find.text('Rina Marlina'), findsOneWidget);
+    expect(find.text('Nomor WhatsApp'), findsNothing);
+    expect(find.text('6281234567890'), findsNothing);
     expect(
       find.byKey(const Key('check_booking_wa_admin_button')),
       findsOneWidget,
@@ -314,7 +373,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('CheckBookingScreen masks booking code and PII on phone-only lookup', (
+  testWidgets('CheckBookingScreen rejects phone-only or code-only lookup and shows identical not-found state for mismatches', (
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(const ProviderScope(child: CustomerApp()));
@@ -328,44 +387,280 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    // Phone-only lookup must be rejected and never emit masked codes.
     await tester.enterText(
       find.byKey(const Key('check_booking_wa_input')),
       '081234567890',
     );
     await tester.pumpAndSettle();
-
     await tester.tap(find.byKey(const Key('check_booking_submit_button')));
     await tester.pumpAndSettle();
 
-    expect(find.text('BK-***********'), findsOneWidget);
-    expect(
-      find.descendant(
-        of: find.byType(Card).last,
-        matching: find.text('BK-***********'),
+    expect(find.text('Kode booking wajib diisi.'), findsOneWidget);
+    expect(find.text('BK-***********'), findsNothing);
+    expect(find.text('Griya Hijau Residence Tipe 45/84'), findsNothing);
+
+    // Code-only lookup must be rejected.
+    await tester.ensureVisible(
+      find.byKey(const Key('check_booking_code_input')),
+    );
+    await tester.enterText(
+      find.byKey(const Key('check_booking_code_input')),
+      'BK-20261114-DEMO1',
+    );
+    await tester.enterText(find.byKey(const Key('check_booking_wa_input')), '');
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const Key('check_booking_submit_button')),
+    );
+    await tester.tap(find.byKey(const Key('check_booking_submit_button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Nomor WhatsApp wajib diisi.'), findsOneWidget);
+
+    // Wrong WA with valid code gives generic not-found notice.
+    await tester.enterText(
+      find.byKey(const Key('check_booking_wa_input')),
+      '089999999999',
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const Key('check_booking_submit_button')),
+    );
+    await tester.tap(find.byKey(const Key('check_booking_submit_button')));
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(
+      find.text('Data booking tidak ditemukan'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Data booking tidak ditemukan'), findsOneWidget);
+
+    // Wrong code with valid WA gives the exact same generic not-found notice.
+    await tester.ensureVisible(
+      find.byKey(const Key('check_booking_code_input')),
+    );
+    await tester.enterText(
+      find.byKey(const Key('check_booking_code_input')),
+      'BK-20261114-99999',
+    );
+    await tester.enterText(
+      find.byKey(const Key('check_booking_wa_input')),
+      '081234567890',
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const Key('check_booking_submit_button')),
+    );
+    await tester.tap(find.byKey(const Key('check_booking_submit_button')));
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(
+      find.text('Data booking tidak ditemukan'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Data booking tidak ditemukan'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('CheckBookingScreen clears code on /cek-booking?wa=... deep link without auto-lookup and BookingSuccessScreen passes both code & wa', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      KeyedSubtree(
+        key: const ValueKey<String>('deeplink_clear'),
+        child: _wrapWithRouter(
+          const SizedBox.shrink(),
+          initialLocation:
+              '/cek-booking?code=BK-20261114-DEMO1&wa=081234567890',
+        ),
       ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Rina Marlina'), findsOneWidget);
+
+    GoRouter.of(tester.element(find.byType(CheckBookingScreen)))
+        .go('/cek-booking?wa=081234567890');
+    await tester.pumpAndSettle();
+
+    final TextFormField codeField = tester.widget<TextFormField>(
+      find.byKey(const Key('check_booking_code_input')),
+    );
+    final TextFormField waField = tester.widget<TextFormField>(
+      find.byKey(const Key('check_booking_wa_input')),
+    );
+    expect(codeField.controller?.text, isEmpty);
+    expect(waField.controller?.text, '081234567890');
+    expect(find.text('Rina Marlina'), findsNothing);
+    expect(find.text('Cara mengecek status pengajuan'), findsOneWidget);
+
+    final BookingSuccessArgs args = BookingSuccessArgs(
+      booking: Booking(
+        id: 1,
+        bookingCode: 'BK-20261114-DEMO1',
+        propertyId: 1,
+        customerName: 'Rina Marlina',
+        customerWhatsapp: '6281234567890',
+        intentType: IntentType.surveyLocation,
+        preferredSurveyDate: DateTime(2026, 11, 23, 10, 0),
+        funnelStatus: FunnelStatus.newLead,
+      ),
+      propertyTitle: 'Griya Hijau Residence Tipe 45/84',
+      propertySlug: 'griya-hijau-residence-45-84',
+    );
+    await tester.pumpWidget(
+      KeyedSubtree(
+        key: const ValueKey<String>('booking_success_flow'),
+        child: _wrapWithRouter(BookingSuccessScreen(args: args)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('booking_success_check_status_button')),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.byKey(const Key('booking_success_check_status_button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Cek Status Booking'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Rina Marlina'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Jadwal survei'), findsOneWidget);
+    expect(find.text('Rina Marlina'), findsOneWidget);
+  });
+
+  testWidgets('Inactive category properties render not-found on detail and booking form without fallback Properti badge', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      KeyedSubtree(
+        key: const ValueKey<String>('inactive_detail'),
+        child: _wrapWithRouter(
+          const PropertyDetailScreen(slug: 'inactive-cat-prop'),
+          repositoryOverride: const _InactiveCategoryPropertyRepository(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Properti tidak ditemukan'), findsOneWidget);
+    expect(find.text('Properti Kategori Nonaktif'), findsNothing);
+    expect(find.text('Booking / Jadwalkan Survei'), findsNothing);
+    expect(find.text('Properti'), findsNothing);
+
+    await tester.pumpWidget(
+      KeyedSubtree(
+        key: const ValueKey<String>('inactive_booking'),
+        child: _wrapWithRouter(
+          const BookingFormScreen(slug: 'inactive-cat-prop'),
+          repositoryOverride: const _InactiveCategoryPropertyRepository(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Properti tidak ditemukan'), findsOneWidget);
+    expect(find.text('Kirim Pengajuan Booking'), findsNothing);
+  });
+
+  testWidgets('Fail-closed release mode blocks demo fallback when Supabase is uninitialized', (
+    WidgetTester tester,
+  ) async {
+    final bool prevInit = EnvConfig.isSupabaseInitialized;
+    final String? prevErr = EnvConfig.supabaseInitError;
+    addTearDown(() {
+      EnvConfig.isSupabaseInitialized = prevInit;
+      EnvConfig.supabaseInitError = prevErr;
+    });
+
+    EnvConfig.isSupabaseInitialized = false;
+    EnvConfig.supabaseInitError =
+        'Gagal terhubung ke server. Periksa koneksi internet Anda lalu coba lagi.';
+
+    await tester.pumpWidget(
+      const ProviderScope(child: CustomerApp(requireSupabase: true)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('release_connectivity_error_screen')),
       findsOneWidget,
     );
-    expect(find.text('R***'), findsOneWidget);
-    expect(find.text('62812****890'), findsOneWidget);
-    expect(
-      find.descendant(
-        of: find.byType(Card).last,
-        matching: find.text('BK-20261114-DEMO1'),
+    expect(find.text('Koneksi server gagal'), findsOneWidget);
+    expect(find.text('Temukan rumah dan ruko impian Anda'), findsNothing);
+
+    const CustomerRepository strictRepo =
+        CustomerRepository(null, allowLocalSeeder: false);
+    await expectLater(strictRepo.loadBootstrap(), throwsStateError);
+    await expectLater(strictRepo.getPropertyBySlug('x'), throwsStateError);
+    await expectLater(
+      strictRepo.checkBookingStatus(
+        bookingCode: 'BK-20261114-DEMO1',
+        customerWhatsapp: '081234567890',
       ),
-      findsNothing,
+      throwsStateError,
     );
-    expect(find.text('Rina Marlina'), findsNothing);
+  });
+
+  testWidgets('Customer hardening: resolveImageUrl, view-tracking isolation, and survey time validation', (
+    WidgetTester tester,
+  ) async {
+    const CustomerRepository repo = CustomerRepository(null);
     expect(
-      find.text('Ingin melihat rumah contoh bersama keluarga.'),
-      findsNothing,
+      repo.resolveImageUrl('  HTTPS://cdn.example.com/a.jpg  '),
+      'https://cdn.example.com/a.jpg',
+    );
+    expect(repo.resolveImageUrl('HTTP://evil.com/a.jpg'), isNull);
+    expect(repo.resolveImageUrl('javascript:alert(1)'), isNull);
+    expect(repo.resolveImageUrl('data:image/png;base64,AAAA'), isNull);
+    expect(repo.resolveImageUrl('//evil.com/a.jpg'), isNull);
+    expect(repo.resolveImageUrl('../secret.jpg'), isNull);
+
+    final DateTime fixedNow = DateTime(2026, 11, 22, 14, 0);
+    expect(
+      BookingFormScreen.validateSurveyDateTime(
+        DateTime(2026, 11, 22, 10, 0),
+        now: fixedNow,
+      ),
+      isNotNull,
+    );
+    expect(
+      BookingFormScreen.validateSurveyDateTime(fixedNow, now: fixedNow),
+      isNotNull,
+    );
+    expect(
+      BookingFormScreen.validateSurveyDateTime(
+        fixedNow.add(const Duration(days: 181)),
+        now: fixedNow,
+      ),
+      isNotNull,
+    );
+    expect(
+      BookingFormScreen.validateSurveyDateTime(
+        DateTime(2026, 11, 22, 16, 0),
+        now: fixedNow,
+      ),
+      isNull,
     );
 
-    await tester.drag(find.byType(ListView), const Offset(0, -250));
+    await tester.pumpWidget(
+      _wrapWithRouter(
+        const PropertyDetailScreen(slug: 'griya-hijau-residence-45-84'),
+        repositoryOverride: const _FailingViewCustomerRepository(),
+      ),
+    );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('BK-***********'));
-    await tester.pump();
-    expect(find.textContaining('berhasil disalin'), findsNothing);
-    expect(tester.takeException(), isNull);
+
+    expect(find.text('Griya Hijau Residence Tipe 45/84'), findsWidgets);
+    expect(find.text('Dilihat 42 kali'), findsOneWidget);
+    expect(find.text('Booking / Jadwalkan Survei'), findsOneWidget);
   });
 
   test('ExternalLauncher allows official HTTPS Google Maps URLs and rejects unsafe schemes/hosts', () {

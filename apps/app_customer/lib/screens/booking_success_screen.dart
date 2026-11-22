@@ -156,7 +156,13 @@ class BookingSuccessScreen extends StatelessWidget {
           OutlinedButton.icon(
             key: const Key('booking_success_check_status_button'),
             onPressed: () => context.go(
-              '/cek-booking?code=${Uri.encodeComponent(booking.bookingCode)}',
+              Uri(
+                path: '/cek-booking',
+                queryParameters: <String, String>{
+                  'code': booking.bookingCode,
+                  'wa': booking.customerWhatsapp,
+                },
+              ).toString(),
             ),
             icon: const Icon(Icons.fact_check_outlined, size: 18),
             label: const Text('Cek Status Booking'),

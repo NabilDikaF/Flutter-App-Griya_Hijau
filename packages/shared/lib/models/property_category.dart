@@ -21,7 +21,7 @@ class PropertyCategory {
       id: (json['id'] as num).toInt(),
       name: json['name'] as String,
       slug: json['slug'] as String,
-      isActive: json['is_active'] as bool? ?? true,
+      isActive: json['is_active'] as bool? ?? false,
       createdAt: _parseDateTime(json['created_at']),
       updatedAt: _parseDateTime(json['updated_at']),
     );
@@ -33,8 +33,8 @@ class PropertyCategory {
       'name': name,
       'slug': slug,
       'is_active': isActive,
-      if (createdAt != null) 'created_at': createdAt!.toIso8601String(),
-      if (updatedAt != null) 'updated_at': updatedAt!.toIso8601String(),
+      if (createdAt != null) 'created_at': createdAt!.toUtc().toIso8601String(),
+      if (updatedAt != null) 'updated_at': updatedAt!.toUtc().toIso8601String(),
     };
   }
 }

@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared/shared.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -128,11 +129,19 @@ class CustomerBookingLookupResult {
 }
 
 /// Repositori data Customer App.
-/// Menghubungi Supabase saat diinisialisasi, atau fallback ke `SeedData` pada test/offline.
+/// Menghubungi Supabase saat diinisialisasi, atau fallback ke `SeedData` hanya pada debug/test.
 class CustomerRepository {
-  const CustomerRepository(this._client);
+  const CustomerRepository(
+    this._client, {
+    this.allowLocalSeeder = !kReleaseMode,
+  });
 
   final SupabaseClient? _client;
+  final bool allowLocalSeeder;
+
+  static final RegExp bookingCodePattern =
+      RegExp(r'^BK-[0-9]{8}-[A-Z0-9]{5,16}$');
+  static final RegExp whatsappPattern = RegExp(r'^628[0-9]{8,12}$');
 
   static final List<Booking> _sessionBookings = <Booking>[
     Booking(
@@ -150,7 +159,23 @@ class CustomerRepository {
     ),
   ];
 
-  bool get isUsingLocalSeeder => _client == null;
+  bool get isUsingLocalSeeder => _client == null && allowLocalSeeder;
+
+  void _assertLocalSeederAllowed() {
+    if (!allowLocalSeeder) {
+      throw StateError(
+        'Layanan server belum terhubung. Periksa koneksi internet Anda lalu coba lagi.',
+      );
+    }
+  }
+
+  static bool isValidBookingCode(String raw) =>
+      bookingCodePattern.hasMatch(raw.trim().toUpperCase());
+
+  static bool isValidWhatsapp(String? raw) {
+    final String? normalized = normalizeWhatsapp(raw);
+    return normalized != null && whatsappPattern.hasMatch(normalized);
+  }
 
   static String? normalizeWhatsapp(String? raw) {
     if (raw == null) return null;
@@ -168,14 +193,22 @@ class CustomerRepository {
   Future<CustomerBootstrapData> loadBootstrap() async {
     final SupabaseClient? client = _client;
     if (client == null) {
-      final List<PropertySummary> sorted =
-          List<PropertySummary>.from(SeedData.publishedSummaries)
-            ..sort(
-              (PropertySummary a, PropertySummary b) =>
-                  b.viewsCount.compareTo(a.viewsCount),
-            );
+      _assertLocalSeederAllowed();
+      final List<PropertyCategory> activeCategories = SeedData.categories
+          .where((PropertyCategory c) => c.isActive)
+          .toList(growable: false);
+      final List<PropertySummary> sorted = SeedData.properties
+          .where(
+            (Property p) => p.isPublished && (p.category?.isActive ?? false),
+          )
+          .map((Property p) => PropertySummary.fromProperty(p))
+          .toList()
+        ..sort(
+          (PropertySummary a, PropertySummary b) =>
+              b.viewsCount.compareTo(a.viewsCount),
+        );
       return CustomerBootstrapData(
-        categories: SeedData.categories,
+        categories: activeCategories,
         locations: SeedData.locations,
         featuredProperties: sorted.take(6).toList(growable: false),
         usingLocalSeeder: true,
@@ -193,14 +226,16 @@ class CustomerRepository {
 
     final List<dynamic> propertyRows = await client
         .from('properties')
-        .select('*, property_categories(*), locations(*), property_images(*)')
+        .select('*, property_categories!inner(*), locations(*), property_images(*)')
         .eq('is_published', true)
+        .eq('property_categories.is_active', true)
         .order('views_count', ascending: false)
         .limit(6);
 
     final List<PropertyCategory> categories = categoryRows
         .whereType<Map<String, dynamic>>()
         .map(PropertyCategory.fromJson)
+        .where((PropertyCategory c) => c.isActive)
         .toList(growable: false);
 
     final List<Location> locations = locationRows
@@ -211,6 +246,9 @@ class CustomerRepository {
     final List<PropertySummary> properties = propertyRows
         .whereType<Map<String, dynamic>>()
         .map(Property.fromJson)
+        .where(
+          (Property p) => p.isPublished && (p.category?.isActive ?? false),
+        )
         .map((Property p) => PropertySummary.fromProperty(p))
         .toList(growable: false);
 
@@ -225,6 +263,7 @@ class CustomerRepository {
   Future<CatalogSearchResult> searchProperties(CatalogFilter filter) async {
     final SupabaseClient? client = _client;
     if (client == null) {
+      _assertLocalSeederAllowed();
       return _searchSeedData(filter);
     }
 
@@ -259,8 +298,11 @@ class CustomerRepository {
   Future<Property?> getPropertyBySlug(String slug) async {
     final SupabaseClient? client = _client;
     if (client == null) {
+      _assertLocalSeederAllowed();
       for (final Property property in SeedData.properties) {
-        if (property.isPublished && property.slug == slug) {
+        if (property.isPublished &&
+            (property.category?.isActive ?? false) &&
+            property.slug == slug) {
           return property;
         }
       }
@@ -269,19 +311,28 @@ class CustomerRepository {
 
     final Map<String, dynamic>? row = await client
         .from('properties')
-        .select('*, property_categories(*), locations(*), property_images(*)')
+        .select('*, property_categories!inner(*), locations(*), property_images(*)')
         .eq('slug', slug)
         .eq('is_published', true)
+        .eq('property_categories.is_active', true)
         .maybeSingle();
 
-    return row != null ? Property.fromJson(row) : null;
+    if (row == null) return null;
+    final Property property = Property.fromJson(row);
+    if (!property.isPublished || !(property.category?.isActive ?? false)) {
+      return null;
+    }
+    return property;
   }
 
   Future<int?> recordPropertyView(int propertyId) async {
     final SupabaseClient? client = _client;
     if (client == null) {
+      _assertLocalSeederAllowed();
       for (final Property property in SeedData.properties) {
-        if (property.id == propertyId && property.isPublished) {
+        if (property.id == propertyId &&
+            property.isPublished &&
+            (property.category?.isActive ?? false)) {
           return property.viewsCount + 1;
         }
       }
@@ -298,6 +349,7 @@ class CustomerRepository {
   Future<Booking> createBooking(BookingCreateInput input) async {
     final SupabaseClient? client = _client;
     if (client == null) {
+      _assertLocalSeederAllowed();
       return Booking(
         id: 1,
         bookingCode: 'BK-20261114-DEMO1',
@@ -322,7 +374,7 @@ class CustomerRepository {
       if (code.isEmpty) {
         throw const FormatException('Kode booking tidak diterima dari server.');
       }
-      final Booking booking = Booking(
+      return Booking(
         id: 0,
         bookingCode: code,
         propertyId: input.propertyId,
@@ -335,37 +387,37 @@ class CustomerRepository {
         funnelStatus: FunnelStatus.newLead,
         createdAt: DateTime.now(),
       );
-      _rememberSessionBooking(booking);
-      return booking;
     } on PostgrestException catch (error) {
       throw Exception(error.message);
     }
   }
 
-  void _rememberSessionBooking(Booking booking) {
-    if (booking.bookingCode == 'BK-20261114-DEMO1') return;
-    _sessionBookings.removeWhere(
-      (Booking item) => item.bookingCode == booking.bookingCode,
-    );
-    _sessionBookings.insert(0, booking);
-  }
-
   Future<List<CustomerBookingLookupResult>> checkBookingStatus({
-    String? bookingCode,
-    String? customerWhatsapp,
+    required String bookingCode,
+    required String customerWhatsapp,
   }) async {
-    final String trimmedCode = (bookingCode ?? '').trim().toUpperCase();
-    final String? cleanCode = trimmedCode.isEmpty ? null : trimmedCode;
+    final String cleanCode = bookingCode.trim().toUpperCase();
     final String? cleanWa = normalizeWhatsapp(customerWhatsapp);
 
-    if (cleanCode == null && cleanWa == null) {
+    if (cleanCode.isEmpty || cleanWa == null) {
       throw ArgumentError(
-        'Masukkan kode booking atau nomor WhatsApp untuk mengecek status.',
+        'Kode booking dan nomor WhatsApp wajib diisi.',
+      );
+    }
+    if (!bookingCodePattern.hasMatch(cleanCode)) {
+      throw ArgumentError(
+        'Format kode booking tidak valid (contoh: BK-20261122-A1B2C3D4E5F60718).',
+      );
+    }
+    if (!whatsappPattern.hasMatch(cleanWa)) {
+      throw ArgumentError(
+        'Format nomor WhatsApp tidak valid (gunakan awalan 08 atau 628, 11-15 digit).',
       );
     }
 
     final SupabaseClient? client = _client;
     if (client == null) {
+      _assertLocalSeederAllowed();
       return _lookupSessionBookings(
         bookingCode: cleanCode,
         customerWhatsapp: cleanWa,
@@ -384,124 +436,107 @@ class CustomerRepository {
           ? raw.whereType<Map<String, dynamic>>().toList(growable: false)
           : const <Map<String, dynamic>>[];
 
-      final List<CustomerBookingLookupResult> results = rows
+      return rows
           .map(CustomerBookingLookupResult.fromRpcJson)
-          .toList(growable: true);
-
-      // Gabungkan booking sesi ini hanya saat pencarian kode spesifik (hindari duplikat bermasker pada pencarian nomor WA).
-      if (cleanCode != null) {
-        final Set<String> returnedCodes = results
-            .map((CustomerBookingLookupResult item) => item.booking.bookingCode)
-            .toSet();
-        for (final CustomerBookingLookupResult cached
-            in _lookupSessionBookings(
-              bookingCode: cleanCode,
-              customerWhatsapp: cleanWa,
-              excludeDemoFallback: true,
-            )) {
-          if (!returnedCodes.contains(cached.booking.bookingCode)) {
-            results.add(cached);
-          }
-        }
-      }
-      return results;
+          .toList(growable: false);
     } on PostgrestException catch (error) {
       throw Exception(error.message);
     }
   }
 
   List<CustomerBookingLookupResult> _lookupSessionBookings({
-    String? bookingCode,
-    String? customerWhatsapp,
-    bool excludeDemoFallback = false,
+    required String bookingCode,
+    required String customerWhatsapp,
   }) {
     final List<CustomerBookingLookupResult> matches =
         <CustomerBookingLookupResult>[];
 
     for (final Booking booking in _sessionBookings) {
-      if (excludeDemoFallback &&
-          booking.bookingCode == 'BK-20261114-DEMO1') {
-        continue;
-      }
-      if (bookingCode != null &&
-          booking.bookingCode.toUpperCase() != bookingCode) {
-        continue;
-      }
-      if (customerWhatsapp != null &&
-          booking.customerWhatsapp != customerWhatsapp) {
+      if (booking.bookingCode.toUpperCase() != bookingCode ||
+          normalizeWhatsapp(booking.customerWhatsapp) != customerWhatsapp) {
         continue;
       }
 
-      final Property property = SeedData.properties.firstWhere(
-        (Property p) => p.id == booking.propertyId,
-        orElse: () => SeedData.properties.first,
+      Property? property;
+      for (final Property item in SeedData.properties) {
+        if (item.id == booking.propertyId) {
+          property = item;
+          break;
+        }
+      }
+      if (property == null ||
+          !property.isPublished ||
+          !(property.category?.isActive ?? false)) {
+        continue;
+      }
+
+      final Booking sanitizedBooking = Booking(
+        id: booking.id,
+        bookingCode: booking.bookingCode,
+        propertyId: booking.propertyId,
+        customerName: booking.customerName,
+        customerWhatsapp: '',
+        intentType: booking.intentType,
+        preferredSurveyDate: booking.preferredSurveyDate,
+        confirmedSurveyDate: booking.confirmedSurveyDate,
+        paymentPlan: booking.paymentPlan,
+        customerNotes: booking.customerNotes,
+        funnelStatus: booking.funnelStatus,
+        adminNotes: null,
+        createdAt: booking.createdAt,
+        updatedAt: booking.updatedAt,
       );
-
-      final Booking resultBooking = bookingCode != null
-          ? booking
-          : _maskBookingForPhoneLookup(booking);
 
       matches.add(
         CustomerBookingLookupResult(
-          booking: resultBooking,
+          booking: sanitizedBooking,
           propertyTitle: property.title,
           propertySlug: property.slug,
           propertyPrice: property.price,
-          categoryName: property.category?.name ?? 'Properti',
-          locationLabel: property.location?.displayName ?? 'Bandung',
+          categoryName: property.category?.name ?? '',
+          locationLabel: property.location?.displayName ?? '',
           primaryImagePath: property.primaryImagePath,
         ),
       );
     }
 
-    return matches.take(5).toList(growable: false);
-  }
-
-  static Booking _maskBookingForPhoneLookup(Booking booking) {
-    final String trimmedName = booking.customerName.trim();
-    final String maskedName =
-        trimmedName.length <= 1 ? '***' : '${trimmedName[0]}***';
-    final String wa = booking.customerWhatsapp;
-    final String maskedWa = wa.length > 8
-        ? '${wa.substring(0, 5)}****${wa.substring(wa.length - 3)}'
-        : '****';
-    return Booking(
-      id: booking.id,
-      bookingCode: 'BK-***********',
-      propertyId: booking.propertyId,
-      customerName: maskedName,
-      customerWhatsapp: maskedWa,
-      intentType: booking.intentType,
-      preferredSurveyDate: booking.preferredSurveyDate,
-      confirmedSurveyDate: booking.confirmedSurveyDate,
-      paymentPlan: booking.paymentPlan,
-      customerNotes: null,
-      funnelStatus: booking.funnelStatus,
-      adminNotes: booking.adminNotes,
-      createdAt: booking.createdAt,
-      updatedAt: booking.updatedAt,
-    );
+    return matches.take(1).toList(growable: false);
   }
 
   String? resolveImageUrl(String? imagePath) {
-    if (imagePath == null || imagePath.trim().isEmpty) return null;
-    if (imagePath.startsWith('https://')) {
-      return imagePath;
-    }
-    if (imagePath.startsWith('http://')) {
+    final String trimmed = (imagePath ?? '').trim();
+    if (trimmed.isEmpty) return null;
+
+    final Uri? parsed = Uri.tryParse(trimmed);
+    if (parsed == null) return null;
+    if (parsed.hasScheme) {
+      if (parsed.scheme.toLowerCase() == 'https' &&
+          parsed.host.isNotEmpty &&
+          parsed.userInfo.isEmpty) {
+        return parsed.toString();
+      }
       return null;
     }
+
+    if (trimmed.startsWith('/') ||
+        trimmed.contains('..') ||
+        trimmed.contains(':') ||
+        trimmed.contains('\\')) {
+      return null;
+    }
+
     final SupabaseClient? client = _client;
     if (client == null) return null;
     return client.storage
         .from(CompanyConfig.propertyImagesBucket)
-        .getPublicUrl(imagePath);
+        .getPublicUrl(trimmed);
   }
 
   CatalogSearchResult _searchSeedData(CatalogFilter filter) {
     final String keyword = filter.keyword.trim().toLowerCase();
     final List<Property> filtered = SeedData.properties.where((Property p) {
       if (!p.isPublished) return false;
+      if (!(p.category?.isActive ?? false)) return false;
       if (keyword.isNotEmpty) {
         final bool matchTitle = p.title.toLowerCase().contains(keyword);
         final bool matchAddr =

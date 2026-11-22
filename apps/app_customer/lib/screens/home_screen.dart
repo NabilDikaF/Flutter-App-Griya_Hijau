@@ -54,7 +54,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         child: ListView(
           padding: EdgeInsets.zero,
           children: <Widget>[
-            _buildHeroAndSearch(bootstrapAsync.asData?.value),
+            _buildHeroAndSearch(
+              bootstrapAsync.asData?.value,
+              useLocalFallback: repository.isUsingLocalSeeder,
+            ),
             Padding(
               padding: const EdgeInsets.fromLTRB(
                 AppSpacing.pagePadding,
@@ -99,8 +102,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                               imageUrl: repository.resolveImageUrl(
                                 item.primaryImagePath,
                               ),
-                              onTap: () =>
-                                  context.push('/properti/${item.slug}'),
+                              onTap: () => context.push(
+                                '/properti/${Uri.encodeComponent(item.slug)}',
+                              ),
                             ),
                             const SizedBox(height: AppSpacing.lg),
                           ],
@@ -125,10 +129,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  Widget _buildHeroAndSearch(CustomerBootstrapData? data) {
-    final List<PropertyCategory> categories =
-        data?.categories ?? SeedData.categories;
-    final List<Location> locations = data?.locations ?? SeedData.locations;
+  Widget _buildHeroAndSearch(
+    CustomerBootstrapData? data, {
+    required bool useLocalFallback,
+  }) {
+    final List<PropertyCategory> categories = data?.categories ??
+        (useLocalFallback
+            ? SeedData.categories
+            : const <PropertyCategory>[]);
+    final List<Location> locations = data?.locations ??
+        (useLocalFallback ? SeedData.locations : const <Location>[]);
 
     return Container(
       decoration: const BoxDecoration(

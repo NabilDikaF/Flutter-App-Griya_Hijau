@@ -16,6 +16,9 @@ abstract final class EnvConfig {
   /// Membuat unit/widget test tetap berjalan offline dengan `SeedData`.
   static bool isSupabaseInitialized = false;
 
+  /// Pesan kegagalan inisialisasi Supabase (dipakai fail-closed pada mode rilis).
+  static String? supabaseInitError;
+
   static bool get hasSupabaseConfig =>
       supabaseUrl.trim().isNotEmpty && supabaseAnonKey.trim().isNotEmpty;
 

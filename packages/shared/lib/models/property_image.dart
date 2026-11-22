@@ -38,8 +38,8 @@ class PropertyImage {
       'image_path': imagePath,
       'is_primary': isPrimary,
       'sort_order': sortOrder,
-      if (createdAt != null) 'created_at': createdAt!.toIso8601String(),
-      if (updatedAt != null) 'updated_at': updatedAt!.toIso8601String(),
+      if (createdAt != null) 'created_at': createdAt!.toUtc().toIso8601String(),
+      if (updatedAt != null) 'updated_at': updatedAt!.toUtc().toIso8601String(),
     };
   }
 }
