@@ -6,15 +6,16 @@ import 'package:shared/shared.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'core/env_config.dart';
+import 'core/secure_session_storage.dart';
 import 'data/admin_repository.dart';
 import 'routing/app_router.dart';
 
-Future<bool> initializeAdminSupabase() async {
-  if (!EnvConfig.hasSupabaseConfig) {
+Future<bool> initializeAdminSupabase({bool isRelease = kReleaseMode}) async {
+  final String? releaseError =
+      isRelease ? EnvConfig.releaseConfigError() : null;
+  if (releaseError != null || !EnvConfig.hasSupabaseConfig) {
     EnvConfig.isSupabaseInitialized = false;
-    EnvConfig.supabaseInitError = kReleaseMode
-        ? 'Konfigurasi layanan belum tersedia. Silakan perbarui aplikasi atau hubungi administrator.'
-        : null;
+    EnvConfig.supabaseInitError = releaseError;
     return false;
   }
 
@@ -22,6 +23,14 @@ Future<bool> initializeAdminSupabase() async {
     await Supabase.initialize(
       url: EnvConfig.supabaseUrl,
       publishableKey: EnvConfig.supabaseAnonKey,
+      authOptions: FlutterAuthClientOptions(
+        localStorage: SecureSupabaseLocalStorage(
+          persistSessionKey: SecureSupabaseLocalStorage.sessionKeyForUrl(
+            EnvConfig.supabaseUrl,
+          ),
+        ),
+        pkceAsyncStorage: const SecureGotrueAsyncStorage(),
+      ),
     );
     EnvConfig.isSupabaseInitialized = true;
     EnvConfig.supabaseInitError = null;

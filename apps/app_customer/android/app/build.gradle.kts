@@ -33,6 +33,19 @@ val hasReleaseKeystore: Boolean = keystorePropertiesFile.exists() &&
     !keyAliasValue.isNullOrEmpty() &&
     !keyPasswordValue.isNullOrEmpty()
 
+val requireReleaseKeystore: Boolean =
+    project.findProperty("REQUIRE_RELEASE_KEYSTORE")?.toString()?.equals("true", ignoreCase = true) == true
+val allowDebugSigning: Boolean = !requireReleaseKeystore &&
+    project.findProperty("ALLOW_DEBUG_SIGNING")?.toString()?.equals("true", ignoreCase = true) == true
+val releaseKeystoreErrorMessage =
+    "Release keystore tidak ditemukan atau tidak lengkap di android/key.properties. " +
+        "Salin android/key.properties.example ke android/key.properties dan isi path keystore rilis yang valid. " +
+        "Untuk uji coba lokal tanpa keystore rilis, aktifkan opt-out eksplisit -PALLOW_DEBUG_SIGNING=true " +
+        "(atau env ORG_GRADLE_PROJECT_ALLOW_DEBUG_SIGNING=true saat memakai flutter build)."
+val isReleaseTaskRequested: Boolean = gradle.startParameter.taskNames.any { taskName ->
+    taskName.contains("release", ignoreCase = true)
+}
+
 android {
     namespace = "id.rindangalam.customer"
     compileSdk = flutter.compileSdkVersion
@@ -70,24 +83,38 @@ android {
         }
     }
 
-    val requireReleaseKeystore: Boolean =
-        project.findProperty("REQUIRE_RELEASE_KEYSTORE")?.toString()?.toBoolean() == true
-
     buildTypes {
         release {
-            if (requireReleaseKeystore && !hasReleaseKeystore) {
-                throw GradleException(
-                    "Release keystore (android/key.properties) wajib dikonfigurasi saat REQUIRE_RELEASE_KEYSTORE=true.",
+            if (!hasReleaseKeystore && !allowDebugSigning && isReleaseTaskRequested) {
+                throw GradleException(releaseKeystoreErrorMessage)
+            }
+            isMinifyEnabled = hasReleaseKeystore
+            isShrinkResources = hasReleaseKeystore
+            if (hasReleaseKeystore) {
+                proguardFiles(
+                    getDefaultProguardFile("proguard-android-optimize.txt"),
+                    "proguard-rules.pro",
                 )
             }
-            isMinifyEnabled = requireReleaseKeystore
-            isShrinkResources = requireReleaseKeystore
-            signingConfig = if (hasReleaseKeystore) {
-                signingConfigs.getByName("release")
-            } else {
-                // Fallback to debug keys for UAT testing when key.properties is not yet provisioned.
-                signingConfigs.getByName("debug")
+            signingConfig = when {
+                hasReleaseKeystore -> signingConfigs.getByName("release")
+                allowDebugSigning -> signingConfigs.getByName("debug")
+                else -> null
             }
+        }
+    }
+}
+
+if (!hasReleaseKeystore && !allowDebugSigning) {
+    val missingKeystoreMsg = releaseKeystoreErrorMessage
+    tasks.matching { task ->
+        task.name == "assembleRelease" ||
+            task.name == "bundleRelease" ||
+            task.name == "packageRelease" ||
+            task.name == "packageReleaseBundle"
+    }.configureEach {
+        doFirst {
+            throw GradleException(missingKeystoreMsg)
         }
     }
 }

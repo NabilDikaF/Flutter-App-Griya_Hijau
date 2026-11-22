@@ -9,12 +9,12 @@ import 'core/env_config.dart';
 import 'data/customer_repository.dart';
 import 'routing/app_router.dart';
 
-Future<bool> initializeCustomerSupabase() async {
-  if (!EnvConfig.hasSupabaseConfig) {
+Future<bool> initializeCustomerSupabase({bool isRelease = kReleaseMode}) async {
+  final String? releaseError =
+      isRelease ? EnvConfig.releaseConfigError() : null;
+  if (releaseError != null || !EnvConfig.hasSupabaseConfig) {
     EnvConfig.isSupabaseInitialized = false;
-    EnvConfig.supabaseInitError = kReleaseMode
-        ? 'Konfigurasi layanan belum tersedia. Silakan perbarui aplikasi atau hubungi tim dukungan.'
-        : null;
+    EnvConfig.supabaseInitError = releaseError;
     return false;
   }
 

@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:app_admin/core/env_config.dart';
 import 'package:app_admin/core/image_compressor.dart';
+import 'package:app_admin/core/secure_session_storage.dart';
 import 'package:app_admin/core/slug_helper.dart';
 import 'package:app_admin/data/admin_models.dart';
 import 'package:app_admin/data/admin_repository.dart';
@@ -944,4 +945,137 @@ void main() {
       );
     });
   });
+
+  group('Stage-4 Android & Config Hardening (B4)', () {
+    test('EnvConfig requires explicit dart-define on release and initializeAdminSupabase fails closed', () async {
+      final bool prevInit = EnvConfig.isSupabaseInitialized;
+      final String? prevErr = EnvConfig.supabaseInitError;
+      addTearDown(() {
+        EnvConfig.isSupabaseInitialized = prevInit;
+        EnvConfig.supabaseInitError = prevErr;
+      });
+
+      expect(EnvConfig.supabaseUrl, isEmpty);
+      expect(EnvConfig.supabaseAnonKey, isEmpty);
+      expect(EnvConfig.hasSupabaseConfig, isFalse);
+      expect(
+        EnvConfig.missingRequiredKeys(url: '', anonKey: ''),
+        <String>['SUPABASE_URL', 'SUPABASE_ANON_KEY'],
+      );
+      expect(
+        EnvConfig.releaseConfigError(url: '', anonKey: ''),
+        allOf(contains('SUPABASE_URL'), contains('SUPABASE_ANON_KEY')),
+      );
+      expect(
+        EnvConfig.releaseConfigError(
+          url: 'http://example.supabase.co',
+          anonKey: 'anon-key',
+        ),
+        contains('HTTPS'),
+      );
+      expect(
+        EnvConfig.releaseConfigError(
+          url: 'https://example.supabase.co',
+          anonKey: 'anon-key',
+        ),
+        isNull,
+      );
+
+      EnvConfig.isSupabaseInitialized = true;
+      EnvConfig.supabaseInitError = null;
+      final bool initialized = await initializeAdminSupabase(isRelease: true);
+      expect(initialized, isFalse);
+      expect(EnvConfig.isSupabaseInitialized, isFalse);
+      expect(EnvConfig.supabaseInitError, contains('SUPABASE_URL'));
+      expect(EnvConfig.supabaseInitError, contains('SUPABASE_ANON_KEY'));
+    });
+
+    test('SecureSupabaseLocalStorage & SecureGotrueAsyncStorage persist and fail closed on Keystore read errors', () async {
+      expect(
+        SecureSupabaseLocalStorage.sessionKeyForUrl(
+          'https://rekqhpdaenzgnjvajquv.supabase.co',
+        ),
+        'sb-rekqhpdaenzgnjvajquv-auth-token',
+      );
+      expect(
+        SecureSupabaseLocalStorage.sessionKeyForUrl(''),
+        'SUPABASE_PERSIST_SESSION_KEY',
+      );
+
+      final _MemorySecureKeyValueStore store = _MemorySecureKeyValueStore();
+      final SecureSupabaseLocalStorage localStorage =
+          SecureSupabaseLocalStorage(
+        persistSessionKey: 'sb-test-auth-token',
+        store: store,
+      );
+      await localStorage.initialize();
+      expect(await localStorage.hasAccessToken(), isFalse);
+      expect(await localStorage.accessToken(), isNull);
+
+      await localStorage.persistSession('{"access_token":"secret"}');
+      expect(await localStorage.hasAccessToken(), isTrue);
+      expect(await localStorage.accessToken(), '{"access_token":"secret"}');
+
+      // Simulate corrupted Keystore ciphertext: fails closed and wipes stale entry.
+      store.throwOnRead = true;
+      expect(await localStorage.hasAccessToken(), isFalse);
+      expect(store.values.containsKey('sb-test-auth-token'), isFalse);
+
+      store.throwOnRead = false;
+      await localStorage.persistSession('{"access_token":"secret2"}');
+      store.throwOnRead = true;
+      expect(await localStorage.accessToken(), isNull);
+      expect(store.values.containsKey('sb-test-auth-token'), isFalse);
+
+      store.throwOnRead = false;
+      await localStorage.persistSession('{"access_token":"secret3"}');
+      await localStorage.removePersistedSession();
+      expect(await localStorage.hasAccessToken(), isFalse);
+
+      final SecureGotrueAsyncStorage pkceStorage =
+          SecureGotrueAsyncStorage(store: store);
+      await pkceStorage.setItem(key: 'pkce-verifier', value: 'verifier-123');
+      expect(await pkceStorage.getItem(key: 'pkce-verifier'), 'verifier-123');
+
+      store.throwOnRead = true;
+      expect(await pkceStorage.getItem(key: 'pkce-verifier'), isNull);
+      expect(store.values.containsKey('pkce-verifier'), isFalse);
+
+      store.throwOnRead = false;
+      await pkceStorage.setItem(key: 'pkce-verifier', value: 'verifier-456');
+      await pkceStorage.removeItem(key: 'pkce-verifier');
+      expect(await pkceStorage.getItem(key: 'pkce-verifier'), isNull);
+    });
+  });
+}
+
+class _MemorySecureKeyValueStore implements SecureKeyValueStore {
+  final Map<String, String> values = <String, String>{};
+  bool throwOnRead = false;
+
+  @override
+  Future<bool> containsKey(String key) async {
+    if (throwOnRead) {
+      throw Exception('Simulated Keystore containsKey error');
+    }
+    return values.containsKey(key);
+  }
+
+  @override
+  Future<String?> read(String key) async {
+    if (throwOnRead) {
+      throw Exception('Simulated Keystore decryption error');
+    }
+    return values[key];
+  }
+
+  @override
+  Future<void> write(String key, String value) async {
+    values[key] = value;
+  }
+
+  @override
+  Future<void> delete(String key) async {
+    values.remove(key);
+  }
 }

@@ -695,4 +695,51 @@ void main() {
       isFalse,
     );
   });
+
+  test('Stage-4 EnvConfig requires explicit dart-define in release and guards hasMapsApiKey', () async {
+    final bool prevInit = EnvConfig.isSupabaseInitialized;
+    final String? prevErr = EnvConfig.supabaseInitError;
+    addTearDown(() {
+      EnvConfig.isSupabaseInitialized = prevInit;
+      EnvConfig.supabaseInitError = prevErr;
+    });
+
+    expect(EnvConfig.supabaseUrl, isEmpty);
+    expect(EnvConfig.supabaseAnonKey, isEmpty);
+    expect(EnvConfig.hasSupabaseConfig, isFalse);
+
+    EnvConfig.isSupabaseInitialized = true;
+    expect(EnvConfig.hasMapsApiKey, isFalse);
+
+    expect(
+      EnvConfig.missingRequiredKeys(url: '', anonKey: ''),
+      <String>['SUPABASE_URL', 'SUPABASE_ANON_KEY'],
+    );
+    expect(
+      EnvConfig.releaseConfigError(url: '', anonKey: ''),
+      allOf(contains('SUPABASE_URL'), contains('SUPABASE_ANON_KEY')),
+    );
+    expect(
+      EnvConfig.releaseConfigError(
+        url: 'http://example.supabase.co',
+        anonKey: 'anon-key',
+      ),
+      contains('HTTPS'),
+    );
+    expect(
+      EnvConfig.releaseConfigError(
+        url: 'https://example.supabase.co',
+        anonKey: 'anon-key',
+      ),
+      isNull,
+    );
+
+    EnvConfig.isSupabaseInitialized = true;
+    EnvConfig.supabaseInitError = null;
+    final bool initialized = await initializeCustomerSupabase(isRelease: true);
+    expect(initialized, isFalse);
+    expect(EnvConfig.isSupabaseInitialized, isFalse);
+    expect(EnvConfig.supabaseInitError, contains('SUPABASE_URL'));
+    expect(EnvConfig.supabaseInitError, contains('SUPABASE_ANON_KEY'));
+  });
 }
