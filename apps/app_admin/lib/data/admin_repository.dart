@@ -1,27 +1,87 @@
+import 'dart:async';
 import 'dart:math' as math;
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:material_ui/material_ui.dart';
 import 'package:shared/shared.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/env_config.dart';
 import '../core/image_compressor.dart';
+import '../core/slug_helper.dart';
 import 'admin_models.dart';
 
 /// State sesi Admin untuk menjaga navigasi GoRouter (`Tugas 3.1`).
 class AdminSessionNotifier extends ChangeNotifier {
-  AdminSessionNotifier(this._repository);
+  AdminSessionNotifier(this._repository) {
+    _currentUser = _repository.currentAdminUserSync();
+    _authSubscription =
+        _repository.authSessionChanges.listen(_onAuthSessionChanged);
+  }
 
   final AdminRepository _repository;
+  AdminSessionUser? _currentUser;
+  StreamSubscription<AdminSessionUser?>? _authSubscription;
+  bool _isDisposed = false;
 
-  AdminSessionUser? get currentUser => _repository.currentAdminUserSync();
+  AdminSessionUser? get currentUser =>
+      (_currentUser != null && _currentUser!.isAdmin) ? _currentUser : null;
   bool get isLoggedIn => currentUser?.isAdmin ?? false;
 
+  void _onAuthSessionChanged(AdminSessionUser? nextUser) {
+    if (_isDisposed) return;
+    if (nextUser == null) {
+      final bool changed = _currentUser != null;
+      _currentUser = null;
+      _repository.clearSensitiveCache();
+      if (changed) {
+        notifyListeners();
+      }
+      return;
+    }
+    if (!nextUser.isAdmin) {
+      _currentUser = null;
+      _repository.clearSensitiveCache();
+      notifyListeners();
+      unawaited(_signOutQuietly());
+      return;
+    }
+    if (_currentUser?.id != nextUser.id ||
+        _currentUser?.email != nextUser.email ||
+        _currentUser?.role != nextUser.role) {
+      _currentUser = nextUser;
+      notifyListeners();
+    }
+  }
+
+  Future<void> _signOutQuietly() async {
+    try {
+      await _repository.signOut();
+    } catch (_) {
+      // Abaikan kegagalan jaringan; state & cache PII lokal sudah dibersihkan.
+    }
+  }
+
   Future<void> initialize() async {
-    await _repository.ensureValidAdminSession();
-    notifyListeners();
+    try {
+      final AdminSessionUser? verified =
+          await _repository.ensureValidAdminSession();
+      if (_isDisposed) return;
+      if (verified == null || !verified.isAdmin) {
+        _currentUser = null;
+        _repository.clearSensitiveCache();
+      } else {
+        _currentUser = verified;
+      }
+    } catch (_) {
+      if (_isDisposed) return;
+      _currentUser = null;
+      _repository.clearSensitiveCache();
+    } finally {
+      if (!_isDisposed) {
+        notifyListeners();
+      }
+    }
   }
 
   Future<AdminSessionUser> signIn({
@@ -32,28 +92,110 @@ class AdminSessionNotifier extends ChangeNotifier {
       email: email,
       password: password,
     );
-    notifyListeners();
+    if (!_isDisposed) {
+      _currentUser = user;
+      notifyListeners();
+    }
     return user;
   }
 
   Future<void> signOut() async {
-    await _repository.signOut();
-    notifyListeners();
+    try {
+      await _repository.signOut();
+    } catch (_) {
+      // Tetap bersihkan state & cache meskipun panggilan logout jaringan gagal.
+    } finally {
+      _currentUser = null;
+      _repository.clearSensitiveCache();
+      if (!_isDisposed) {
+        notifyListeners();
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _isDisposed = true;
+    unawaited(_authSubscription?.cancel());
+    super.dispose();
   }
 }
 
 /// Repositori penuh Aplikasi Admin (Auth + Master + Properti + Foto + Booking + Dashboard).
 /// Berkomunikasi dengan Supabase ketika diinisialisasi, atau memakai state in-memory
-/// berbasis `SeedData` saat dijalankan di lingkungan pengujian/offline.
+/// berbasis `SeedData` hanya pada pengujian/debug.
 class AdminRepository {
-  AdminRepository(this._client) {
-    if (_client == null) {
+  AdminRepository(
+    this._client, {
+    this.allowLocalSeeder = !kReleaseMode,
+  }) {
+    if (_client == null && allowLocalSeeder) {
       _initDemoState();
+    } else {
+      _demoCategories = <PropertyCategory>[];
+      _demoLocations = <Location>[];
+      _demoProperties = <Property>[];
+      _demoBookings = <BookingWithProperty>[];
     }
   }
 
+  static const int maxAdminNotesLength = 2000;
+
   final SupabaseClient? _client;
-  final math.Random _random = math.Random();
+  final bool allowLocalSeeder;
+  final math.Random _secureRandom = math.Random.secure();
+
+  bool get isUsingLocalSeeder => _client == null && allowLocalSeeder;
+
+  void _assertLocalSeederAllowed() {
+    if (!allowLocalSeeder) {
+      throw StateError(
+        'Layanan server admin belum terhubung. Periksa koneksi internet Anda lalu coba lagi.',
+      );
+    }
+  }
+
+  /// Menghasilkan path Storage acak berbasis UUID v4 acak kriptografis (`2.2`).
+  static String generateRandomPhotoPath(
+    int propertyId, {
+    math.Random? random,
+  }) {
+    final math.Random rng = random ?? math.Random.secure();
+    final List<int> bytes = List<int>.generate(16, (_) => rng.nextInt(256));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40; // UUID version 4
+    bytes[8] = (bytes[8] & 0x3f) | 0x80; // Variant RFC 4122
+    final String hex = bytes
+        .map((int b) => b.toRadixString(16).padLeft(2, '0'))
+        .join();
+    final String uuid =
+        '${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20, 32)}';
+    return 'properties/$propertyId/$uuid.jpg';
+  }
+
+  static AdminSessionUser? sessionUserFromAuthUser(User? user) {
+    if (user == null) return null;
+    final String role = user.appMetadata['role']?.toString() ?? '';
+    return AdminSessionUser(
+      id: user.id,
+      email: user.email ?? '',
+      role: role,
+    );
+  }
+
+  Stream<AdminSessionUser?> get authSessionChanges {
+    final SupabaseClient? client = _client;
+    if (client == null) {
+      return const Stream<AdminSessionUser?>.empty();
+    }
+    return client.auth.onAuthStateChange.map(
+      (AuthState state) => sessionUserFromAuthUser(state.session?.user),
+    );
+  }
+
+  @mustCallSuper
+  void clearSensitiveCache() {
+    _localImageBytes.clear();
+  }
 
   // State lokal untuk mode pengujian / fallback tanpa koneksi Supabase.
   AdminSessionUser? _demoUser;
@@ -162,7 +304,7 @@ class AdminRepository {
   AdminSessionUser? currentAdminUserSync() {
     final SupabaseClient? client = _client;
     if (client == null) {
-      return _demoUser;
+      return allowLocalSeeder ? _demoUser : null;
     }
     final User? user = client.auth.currentUser;
     if (user == null) return null;
@@ -170,26 +312,43 @@ class AdminRepository {
     if (role != 'admin') return null;
     return AdminSessionUser(
       id: user.id,
-      email: user.email ?? 'admin@rindangalam.id',
+      email: user.email ?? '',
       role: role,
     );
   }
 
   Future<AdminSessionUser?> ensureValidAdminSession() async {
     final SupabaseClient? client = _client;
-    if (client == null) return _demoUser;
-    final User? user = client.auth.currentUser;
-    if (user == null) return null;
-    final String role = user.appMetadata['role']?.toString() ?? '';
-    if (role != 'admin') {
-      await client.auth.signOut();
+    if (client == null) {
+      _assertLocalSeederAllowed();
+      final AdminSessionUser? user = _demoUser;
+      return (user != null && user.isAdmin) ? user : null;
+    }
+
+    final Session? localSession = client.auth.currentSession;
+    final User? localUser = client.auth.currentUser;
+    if (localSession == null || localUser == null) return null;
+
+    try {
+      if (localSession.isExpired) {
+        await client.auth.refreshSession();
+      }
+      final UserResponse response = await client.auth.getUser();
+      final User? serverUser = response.user;
+      final String role = serverUser?.appMetadata['role']?.toString() ?? '';
+      if (serverUser == null || role != 'admin') {
+        await signOut();
+        return null;
+      }
+      return AdminSessionUser(
+        id: serverUser.id,
+        email: serverUser.email ?? '',
+        role: role,
+      );
+    } catch (_) {
+      await signOut();
       return null;
     }
-    return AdminSessionUser(
-      id: user.id,
-      email: user.email ?? '',
-      role: role,
-    );
   }
 
   Future<AdminSessionUser> signInAdmin({
@@ -203,6 +362,7 @@ class AdminRepository {
 
     final SupabaseClient? client = _client;
     if (client == null) {
+      _assertLocalSeederAllowed();
       if (password.length < 6) {
         throw const FormatException('Email atau kata sandi salah.');
       }
@@ -228,7 +388,7 @@ class AdminRepository {
       final User? user = response.user;
       final String role = user?.appMetadata['role']?.toString() ?? '';
       if (user == null || role != 'admin') {
-        await client.auth.signOut();
+        await signOut();
         throw const AdminAccessDeniedException(
           'Akun ini tidak memiliki akses Admin.',
         );
@@ -248,12 +408,24 @@ class AdminRepository {
   }
 
   Future<void> signOut() async {
-    final SupabaseClient? client = _client;
-    if (client == null) {
-      _demoUser = null;
-      return;
+    try {
+      final SupabaseClient? client = _client;
+      if (client == null) {
+        _demoUser = null;
+        return;
+      }
+      try {
+        await client.auth.signOut(scope: SignOutScope.global);
+      } catch (_) {
+        try {
+          await client.auth.signOut(scope: SignOutScope.local);
+        } catch (_) {
+          // Abaikan bila penyimpanan lokal juga gagal dibersihkan; caller tetap hapus state.
+        }
+      }
+    } finally {
+      clearSensitiveCache();
     }
-    await client.auth.signOut();
   }
 
   // ---------------------------------------------------------------------------
@@ -263,12 +435,13 @@ class AdminRepository {
   Future<List<PropertyCategory>> getCategories() async {
     final SupabaseClient? client = _client;
     if (client == null) {
+      _assertLocalSeederAllowed();
       return List<PropertyCategory>.unmodifiable(_demoCategories);
     }
 
     final List<dynamic> rows = await client
         .from('property_categories')
-        .select()
+        .select('id, name, slug, is_active, created_at, updated_at')
         .order('id', ascending: true);
     return rows
         .whereType<Map<String, dynamic>>()
@@ -281,12 +454,14 @@ class AdminRepository {
     required String slug,
     bool isActive = true,
   }) async {
+    final String cleanSlug = SlugHelper.requireValidSlug(slug);
     final SupabaseClient? client = _client;
     if (client == null) {
+      _assertLocalSeederAllowed();
       final PropertyCategory created = PropertyCategory(
         id: _nextCategoryId++,
         name: name.trim(),
-        slug: slug.trim(),
+        slug: cleanSlug,
         isActive: isActive,
         createdAt: DateTime.now(),
       );
@@ -299,15 +474,15 @@ class AdminRepository {
           .from('property_categories')
           .insert(<String, dynamic>{
             'name': name.trim(),
-            'slug': slug.trim(),
+            'slug': cleanSlug,
             'is_active': isActive,
           })
-          .select()
+          .select('id, name, slug, is_active, created_at, updated_at')
           .single();
       return PropertyCategory.fromJson(row);
     } on PostgrestException catch (error) {
       if (error.code == '23505') {
-        throw Exception('Slug kategori "$slug" sudah digunakan.');
+        throw Exception('Slug kategori "$cleanSlug" sudah digunakan.');
       }
       throw Exception(error.message);
     }
@@ -319,14 +494,16 @@ class AdminRepository {
     required String slug,
     required bool isActive,
   }) async {
+    final String cleanSlug = SlugHelper.requireValidSlug(slug);
     final SupabaseClient? client = _client;
     if (client == null) {
+      _assertLocalSeederAllowed();
       final int idx = _demoCategories.indexWhere((PropertyCategory c) => c.id == id);
       if (idx < 0) throw Exception('Kategori tidak ditemukan.');
       final PropertyCategory updated = PropertyCategory(
         id: id,
         name: name.trim(),
-        slug: slug.trim(),
+        slug: cleanSlug,
         isActive: isActive,
         createdAt: _demoCategories[idx].createdAt,
         updatedAt: DateTime.now(),
@@ -340,16 +517,16 @@ class AdminRepository {
           .from('property_categories')
           .update(<String, dynamic>{
             'name': name.trim(),
-            'slug': slug.trim(),
+            'slug': cleanSlug,
             'is_active': isActive,
           })
           .eq('id', id)
-          .select()
+          .select('id, name, slug, is_active, created_at, updated_at')
           .single();
       return PropertyCategory.fromJson(row);
     } on PostgrestException catch (error) {
       if (error.code == '23505') {
-        throw Exception('Slug kategori "$slug" sudah digunakan.');
+        throw Exception('Slug kategori "$cleanSlug" sudah digunakan.');
       }
       throw Exception(error.message);
     }
@@ -358,6 +535,7 @@ class AdminRepository {
   Future<void> deleteCategory(int id) async {
     final SupabaseClient? client = _client;
     if (client == null) {
+      _assertLocalSeederAllowed();
       final bool used = _demoProperties.any(
         (Property p) => p.propertyCategoryId == id,
       );
@@ -385,6 +563,7 @@ class AdminRepository {
   Future<List<Location>> getLocations() async {
     final SupabaseClient? client = _client;
     if (client == null) {
+      _assertLocalSeederAllowed();
       return List<Location>.unmodifiable(_demoLocations);
     }
 
@@ -404,13 +583,15 @@ class AdminRepository {
     required String district,
     required String slug,
   }) async {
+    final String cleanSlug = SlugHelper.requireValidSlug(slug);
     final SupabaseClient? client = _client;
     if (client == null) {
+      _assertLocalSeederAllowed();
       final Location created = Location(
         id: _nextLocationId++,
         city: city.trim(),
         district: district.trim(),
-        slug: slug.trim(),
+        slug: cleanSlug,
         createdAt: DateTime.now(),
       );
       _demoLocations.add(created);
@@ -423,14 +604,14 @@ class AdminRepository {
           .insert(<String, dynamic>{
             'city': city.trim(),
             'district': district.trim(),
-            'slug': slug.trim(),
+            'slug': cleanSlug,
           })
           .select()
           .single();
       return Location.fromJson(row);
     } on PostgrestException catch (error) {
       if (error.code == '23505') {
-        throw Exception('Daerah atau slug "$slug" sudah terdaftar.');
+        throw Exception('Daerah atau slug "$cleanSlug" sudah terdaftar.');
       }
       throw Exception(error.message);
     }
@@ -442,15 +623,17 @@ class AdminRepository {
     required String district,
     required String slug,
   }) async {
+    final String cleanSlug = SlugHelper.requireValidSlug(slug);
     final SupabaseClient? client = _client;
     if (client == null) {
+      _assertLocalSeederAllowed();
       final int idx = _demoLocations.indexWhere((Location l) => l.id == id);
       if (idx < 0) throw Exception('Daerah tidak ditemukan.');
       final Location updated = Location(
         id: id,
         city: city.trim(),
         district: district.trim(),
-        slug: slug.trim(),
+        slug: cleanSlug,
         createdAt: _demoLocations[idx].createdAt,
         updatedAt: DateTime.now(),
       );
@@ -464,7 +647,7 @@ class AdminRepository {
           .update(<String, dynamic>{
             'city': city.trim(),
             'district': district.trim(),
-            'slug': slug.trim(),
+            'slug': cleanSlug,
           })
           .eq('id', id)
           .select()
@@ -472,7 +655,7 @@ class AdminRepository {
       return Location.fromJson(row);
     } on PostgrestException catch (error) {
       if (error.code == '23505') {
-        throw Exception('Daerah atau slug "$slug" sudah terdaftar.');
+        throw Exception('Daerah atau slug "$cleanSlug" sudah terdaftar.');
       }
       throw Exception(error.message);
     }
@@ -481,6 +664,7 @@ class AdminRepository {
   Future<void> deleteLocation(int id) async {
     final SupabaseClient? client = _client;
     if (client == null) {
+      _assertLocalSeederAllowed();
       final bool used = _demoProperties.any((Property p) => p.locationId == id);
       if (used) {
         throw Exception(
@@ -510,6 +694,7 @@ class AdminRepository {
   Future<List<Property>> getAdminProperties() async {
     final SupabaseClient? client = _client;
     if (client == null) {
+      _assertLocalSeederAllowed();
       return List<Property>.unmodifiable(_demoProperties);
     }
 
@@ -526,6 +711,7 @@ class AdminRepository {
   Future<Property?> getPropertyById(int id) async {
     final SupabaseClient? client = _client;
     if (client == null) {
+      _assertLocalSeederAllowed();
       return _findDemoProperty(id);
     }
 
@@ -539,8 +725,13 @@ class AdminRepository {
 
   /// Membuat properti baru. Payload memakai `PropertyInput` tanpa `views_count`.
   Future<Property> createProperty(PropertyInput input) async {
+    final String cleanSlug = SlugHelper.requireValidSlug(
+      input.slug,
+      fieldLabel: 'Slug properti',
+    );
     final SupabaseClient? client = _client;
     if (client == null) {
+      _assertLocalSeederAllowed();
       final PropertyCategory? cat = _demoCategories.cast<PropertyCategory?>().firstWhere(
             (PropertyCategory? c) => c?.id == input.propertyCategoryId,
             orElse: () => null,
@@ -554,7 +745,7 @@ class AdminRepository {
         propertyCategoryId: input.propertyCategoryId,
         locationId: input.locationId,
         title: input.title,
-        slug: input.slug,
+        slug: cleanSlug,
         price: input.price,
         buildingArea: input.buildingArea,
         landArea: input.landArea,
@@ -580,15 +771,19 @@ class AdminRepository {
     }
 
     try {
+      final Map<String, dynamic> payload = <String, dynamic>{
+        ...input.toJson(),
+        'slug': cleanSlug,
+      };
       final Map<String, dynamic> row = await client
           .from('properties')
-          .insert(input.toJson())
+          .insert(payload)
           .select('*, property_categories(*), locations(*), property_images(*)')
           .single();
       return Property.fromJson(row);
     } on PostgrestException catch (error) {
       if (error.code == '23505') {
-        throw Exception('Slug properti "${input.slug}" sudah digunakan.');
+        throw Exception('Slug properti "$cleanSlug" sudah digunakan.');
       }
       throw Exception(error.message);
     }
@@ -596,8 +791,13 @@ class AdminRepository {
 
   /// Memperbarui properti. Payload memakai `PropertyInput` tanpa `views_count`.
   Future<Property> updateProperty(int id, PropertyInput input) async {
+    final String cleanSlug = SlugHelper.requireValidSlug(
+      input.slug,
+      fieldLabel: 'Slug properti',
+    );
     final SupabaseClient? client = _client;
     if (client == null) {
+      _assertLocalSeederAllowed();
       final int idx = _demoProperties.indexWhere((Property p) => p.id == id);
       if (idx < 0) throw Exception('Properti tidak ditemukan.');
       final Property existing = _demoProperties[idx];
@@ -614,7 +814,7 @@ class AdminRepository {
         propertyCategoryId: input.propertyCategoryId,
         locationId: input.locationId,
         title: input.title,
-        slug: input.slug,
+        slug: cleanSlug,
         price: input.price,
         buildingArea: input.buildingArea,
         landArea: input.landArea,
@@ -643,16 +843,20 @@ class AdminRepository {
     }
 
     try {
+      final Map<String, dynamic> payload = <String, dynamic>{
+        ...input.toJson(),
+        'slug': cleanSlug,
+      };
       final Map<String, dynamic> row = await client
           .from('properties')
-          .update(input.toJson())
+          .update(payload)
           .eq('id', id)
           .select('*, property_categories(*), locations(*), property_images(*)')
           .single();
       return Property.fromJson(row);
     } on PostgrestException catch (error) {
       if (error.code == '23505') {
-        throw Exception('Slug properti "${input.slug}" sudah digunakan.');
+        throw Exception('Slug properti "$cleanSlug" sudah digunakan.');
       }
       throw Exception(error.message);
     }
@@ -674,6 +878,7 @@ class AdminRepository {
   ) async {
     final SupabaseClient? client = _client;
     if (client == null) {
+      _assertLocalSeederAllowed();
       final int idx = _demoProperties.indexWhere((Property p) => p.id == id);
       if (idx < 0) return;
       final Property updated = _cloneProperty(
@@ -694,6 +899,7 @@ class AdminRepository {
   Future<void> updatePropertyPublished(int id, bool isPublished) async {
     final SupabaseClient? client = _client;
     if (client == null) {
+      _assertLocalSeederAllowed();
       final int idx = _demoProperties.indexWhere((Property p) => p.id == id);
       if (idx < 0) return;
       _demoProperties[idx] = _cloneProperty(
@@ -714,6 +920,7 @@ class AdminRepository {
   Future<PropertyDeleteResult> deleteOrDeactivateProperty(int id) async {
     final SupabaseClient? client = _client;
     if (client == null) {
+      _assertLocalSeederAllowed();
       final bool hasBooking = _demoBookings.any(
         (BookingWithProperty item) => item.booking.propertyId == id,
       );
@@ -757,6 +964,20 @@ class AdminRepository {
         .where((String path) => path.isNotEmpty)
         .toList(growable: false);
 
+    try {
+      await client.from('properties').delete().eq('id', id);
+    } on PostgrestException catch (error) {
+      if (error.code == '23503') {
+        await updatePropertyPublished(id, false);
+        return const PropertyDeleteResult(
+          wasDeactivatedInstead: true,
+          message:
+              'Properti memiliki riwayat booking, sehingga dinonaktifkan (disembunyikan) dari katalog.',
+        );
+      }
+      rethrow;
+    }
+
     if (paths.isNotEmpty) {
       try {
         await client.storage
@@ -767,7 +988,6 @@ class AdminRepository {
       }
     }
 
-    await client.from('properties').delete().eq('id', id);
     return const PropertyDeleteResult(
       wasDeactivatedInstead: false,
       message: 'Properti berhasil dihapus.',
@@ -780,12 +1000,16 @@ class AdminRepository {
     required bool makePrimary,
     required int sortOrder,
   }) async {
-    final Uint8List compressed = ImageCompressor.compressToJpeg(rawBytes);
-    final String suffix = _random.nextInt(999999).toString().padLeft(6, '0');
-    final String storagePath =
-        'properties/$propertyId/${DateTime.now().millisecondsSinceEpoch}_$suffix.jpg';
-
     final SupabaseClient? client = _client;
+    if (client == null) {
+      _assertLocalSeederAllowed();
+    }
+
+    final Uint8List compressed =
+        await ImageCompressor.compressToJpegAsync(rawBytes);
+    final String storagePath =
+        generateRandomPhotoPath(propertyId, random: _secureRandom);
+
     if (client == null) {
       final int idx =
           _demoProperties.indexWhere((Property p) => p.id == propertyId);
@@ -867,6 +1091,7 @@ class AdminRepository {
   Future<void> setPrimaryPhoto(int propertyId, int imageId) async {
     final SupabaseClient? client = _client;
     if (client == null) {
+      _assertLocalSeederAllowed();
       final int idx =
           _demoProperties.indexWhere((Property p) => p.id == propertyId);
       if (idx < 0) return;
@@ -896,7 +1121,8 @@ class AdminRepository {
     await client
         .from('property_images')
         .update(<String, dynamic>{'is_primary': true})
-        .eq('id', imageId);
+        .eq('id', imageId)
+        .eq('property_id', propertyId);
   }
 
   Future<void> reorderPropertyPhotos(
@@ -905,6 +1131,7 @@ class AdminRepository {
   ) async {
     final SupabaseClient? client = _client;
     if (client == null) {
+      _assertLocalSeederAllowed();
       final int idx =
           _demoProperties.indexWhere((Property p) => p.id == propertyId);
       if (idx < 0) return;
@@ -928,13 +1155,15 @@ class AdminRepository {
       await client
           .from('property_images')
           .update(<String, dynamic>{'sort_order': i})
-          .eq('id', orderedImages[i].id);
+          .eq('id', orderedImages[i].id)
+          .eq('property_id', propertyId);
     }
   }
 
   Future<void> deletePropertyPhoto(PropertyImage image) async {
     final SupabaseClient? client = _client;
     if (client == null) {
+      _assertLocalSeederAllowed();
       _localImageBytes.remove(image.imagePath);
       final int idx = _demoProperties.indexWhere(
         (Property p) => p.id == image.propertyId,
@@ -976,13 +1205,13 @@ class AdminRepository {
           .order('sort_order', ascending: true)
           .order('id', ascending: true)
           .limit(1);
-      final Map<String, dynamic>? first =
-          remainingRows.whereType<Map<String, dynamic>>().firstOrNull;
-      if (first != null) {
+      final List<Map<String, dynamic>> validRows =
+          remainingRows.whereType<Map<String, dynamic>>().toList(growable: false);
+      if (validRows.isNotEmpty) {
         await client
             .from('property_images')
             .update(<String, dynamic>{'is_primary': true})
-            .eq('id', (first['id'] as num).toInt());
+            .eq('id', (validRows.first['id'] as num).toInt());
       }
     }
   }
@@ -1037,79 +1266,144 @@ class AdminRepository {
   }
 
   String? resolveImageUrl(String? imagePath) {
-    if (imagePath == null || imagePath.trim().isEmpty) return null;
-    if (imagePath.startsWith('https://')) {
-      return imagePath;
-    }
-    if (imagePath.startsWith('http://')) {
+    final String trimmed = (imagePath ?? '').trim();
+    if (trimmed.isEmpty) return null;
+
+    final Uri? parsed = Uri.tryParse(trimmed);
+    if (parsed == null) return null;
+    if (parsed.hasScheme) {
+      if (parsed.scheme.toLowerCase() == 'https' &&
+          parsed.host.isNotEmpty &&
+          parsed.userInfo.isEmpty) {
+        return parsed.toString();
+      }
       return null;
     }
+
+    if (trimmed.startsWith('/') ||
+        trimmed.contains('..') ||
+        trimmed.contains(':') ||
+        trimmed.contains('\\')) {
+      return null;
+    }
+
     final SupabaseClient? client = _client;
     if (client == null) return null;
     return client.storage
         .from(CompanyConfig.propertyImagesBucket)
-        .getPublicUrl(imagePath);
+        .getPublicUrl(trimmed);
   }
 
   Uint8List? getLocalImageBytes(String imagePath) => _localImageBytes[imagePath];
 
   // ---------------------------------------------------------------------------
-  // Tugas 3.6 — CRM Booking
+  // Tugas 3.6 — CRM Booking (Filter, Pencarian, & Paginasi Server-Side)
   // ---------------------------------------------------------------------------
 
-  Future<List<BookingWithProperty>> getBookings({
+  Future<AdminBookingsPage> getBookingsPage({
     FunnelStatus? statusFilter,
     String keyword = '',
+    int limit = 25,
+    int offset = 0,
   }) async {
     final SupabaseClient? client = _client;
-    final String lowerKeyword = keyword.trim().toLowerCase();
+    final int clampedLimit = limit.clamp(1, 100);
+    final int clampedOffset = math.max(0, offset);
+    final String trimmedKeyword = keyword.trim();
 
-    List<BookingWithProperty> items;
     if (client == null) {
-      items = List<BookingWithProperty>.from(_demoBookings)
-        ..sort((BookingWithProperty a, BookingWithProperty b) {
+      _assertLocalSeederAllowed();
+      final String lowerKeyword = trimmedKeyword.toLowerCase();
+      final List<BookingWithProperty> sorted = List<BookingWithProperty>.from(
+        _demoBookings,
+      )..sort((BookingWithProperty a, BookingWithProperty b) {
           final DateTime aTime =
               a.booking.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
           final DateTime bTime =
               b.booking.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
-          return bTime.compareTo(aTime);
+          final int byTime = bTime.compareTo(aTime);
+          return byTime != 0 ? byTime : b.booking.id.compareTo(a.booking.id);
         });
-    } else {
-      final List<dynamic> rows = await client
-          .from('bookings')
-          .select(
-            '*, properties(id, slug, title, availability_status, property_categories(name), locations(district))',
-          )
-          .order('created_at', ascending: false)
-          .limit(200);
-      items = rows
-          .whereType<Map<String, dynamic>>()
-          .map(BookingWithProperty.fromJson)
-          .toList(growable: false);
+
+      final List<BookingWithProperty> filtered = sorted.where((
+        BookingWithProperty item,
+      ) {
+        if (statusFilter != null && item.booking.funnelStatus != statusFilter) {
+          return false;
+        }
+        if (lowerKeyword.isNotEmpty) {
+          final bool matchName =
+              item.booking.customerName.toLowerCase().contains(lowerKeyword);
+          final bool matchCode =
+              item.booking.bookingCode.toLowerCase().contains(lowerKeyword);
+          final bool matchWa = item.booking.customerWhatsapp
+              .toLowerCase()
+              .contains(lowerKeyword);
+          final bool matchProp =
+              item.propertyTitle.toLowerCase().contains(lowerKeyword);
+          return matchName || matchCode || matchWa || matchProp;
+        }
+        return true;
+      }).toList(growable: false);
+
+      final int totalCount = filtered.length;
+      final int start = math.min(clampedOffset, totalCount);
+      final int end = math.min(start + clampedLimit, totalCount);
+      return AdminBookingsPage(
+        items: filtered.sublist(start, end),
+        totalCount: totalCount,
+        limit: clampedLimit,
+        offset: start,
+      );
     }
 
-    return items.where((BookingWithProperty item) {
-      if (statusFilter != null && item.booking.funnelStatus != statusFilter) {
-        return false;
-      }
-      if (lowerKeyword.isNotEmpty) {
-        final bool matchName =
-            item.booking.customerName.toLowerCase().contains(lowerKeyword);
-        final bool matchCode =
-            item.booking.bookingCode.toLowerCase().contains(lowerKeyword);
-        final bool matchWa =
-            item.booking.customerWhatsapp.toLowerCase().contains(lowerKeyword);
-        final bool matchProp =
-            item.propertyTitle.toLowerCase().contains(lowerKeyword);
-        return matchName || matchCode || matchWa || matchProp;
-      }
-      return true;
-    }).toList(growable: false);
+    final dynamic raw = await client.rpc(
+      'admin_list_bookings',
+      params: <String, dynamic>{
+        'p_status': statusFilter?.value,
+        'p_keyword': trimmedKeyword.isEmpty ? null : trimmedKeyword,
+        'p_limit': clampedLimit,
+        'p_offset': clampedOffset,
+      },
+    );
+
+    final List<Map<String, dynamic>> rows = raw is List
+        ? raw.whereType<Map<String, dynamic>>().toList(growable: false)
+        : const <Map<String, dynamic>>[];
+
+    final List<BookingWithProperty> items =
+        rows.map(BookingWithProperty.fromRpcJson).toList(growable: false);
+    final int totalCount = rows.isNotEmpty
+        ? ((rows.first['total_count'] as num?)?.toInt() ?? items.length)
+        : 0;
+
+    return AdminBookingsPage(
+      items: items,
+      totalCount: totalCount,
+      limit: clampedLimit,
+      offset: clampedOffset,
+    );
+  }
+
+  Future<List<BookingWithProperty>> getBookings({
+    FunnelStatus? statusFilter,
+    String keyword = '',
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    final AdminBookingsPage page = await getBookingsPage(
+      statusFilter: statusFilter,
+      keyword: keyword,
+      limit: limit,
+      offset: offset,
+    );
+    return page.items;
   }
 
   Future<BookingWithProperty?> getBookingById(int bookingId) async {
     final SupabaseClient? client = _client;
     if (client == null) {
+      _assertLocalSeederAllowed();
       for (final BookingWithProperty item in _demoBookings) {
         if (item.booking.id == bookingId) return item;
       }
@@ -1134,9 +1428,15 @@ class AdminRepository {
   }) async {
     final String? cleanNotes =
         (adminNotes ?? '').trim().isEmpty ? null : adminNotes!.trim();
+    if (cleanNotes != null && cleanNotes.length > maxAdminNotesLength) {
+      throw ArgumentError(
+        'Catatan admin maksimal $maxAdminNotesLength karakter.',
+      );
+    }
     final SupabaseClient? client = _client;
 
     if (client == null) {
+      _assertLocalSeederAllowed();
       final int idx = _demoBookings.indexWhere(
         (BookingWithProperty item) => item.booking.id == bookingId,
       );
@@ -1192,6 +1492,7 @@ class AdminRepository {
 
     final SupabaseClient? client = _client;
     if (client == null) {
+      _assertLocalSeederAllowed();
       return _buildDemoDashboard(
         from: from,
         to: today,
@@ -1224,6 +1525,21 @@ class AdminRepository {
         'p_limit': 10,
       },
     );
+    final dynamic rawSummary = await client.rpc(
+      'admin_dashboard_summary',
+      params: <String, dynamic>{
+        'p_from': fromIso,
+        'p_to': toIso,
+      },
+    );
+    final dynamic rawUpcoming = await client.rpc(
+      'admin_upcoming_surveys',
+      params: <String, dynamic>{'p_limit': 5},
+    );
+    final AdminBookingsPage recentPage = await getBookingsPage(
+      limit: 5,
+      offset: 0,
+    );
 
     final List<AdminPropertyTopItem> topProperties = rawTop is List
         ? rawTop
@@ -1246,51 +1562,39 @@ class AdminRepository {
             .toList(growable: false)
         : const <AdminSearchStatItem>[];
 
-    final List<dynamic> allViewsRows =
-        await client.from('properties').select('views_count');
-    int totalViews = 0;
-    for (final dynamic row in allViewsRows) {
-      if (row is Map<String, dynamic>) {
-        totalViews += (row['views_count'] as num?)?.toInt() ?? 0;
+    Map<String, dynamic>? summaryRow;
+    if (rawSummary is List) {
+      for (final dynamic item in rawSummary) {
+        if (item is Map<String, dynamic>) {
+          summaryRow = item;
+          break;
+        }
       }
+    } else if (rawSummary is Map<String, dynamic>) {
+      summaryRow = rawSummary;
     }
 
-    // Batas waktu WIB (+07:00) agar selaras dengan agregasi `Asia/Jakarta` di RPC.
-    final DateTime startWib = DateTime.utc(from.year, from.month, from.day)
-        .subtract(const Duration(hours: 7));
-    final DateTime endWib = DateTime.utc(today.year, today.month, today.day + 1)
-        .subtract(const Duration(hours: 7));
-    final List<dynamic> searchRows = await client
-        .from('search_logs')
-        .select('id')
-        .gte('searched_at', startWib.toIso8601String())
-        .lt('searched_at', endWib.toIso8601String());
+    final int totalViews =
+        (summaryRow?['total_views'] as num?)?.toInt() ?? 0;
+    final int totalSearches =
+        (summaryRow?['total_searches'] as num?)?.toInt() ?? 0;
+    final int activeLeadsCount =
+        (summaryRow?['active_leads_count'] as num?)?.toInt() ?? 0;
+    final int scheduledSurveysCount =
+        (summaryRow?['scheduled_surveys_count'] as num?)?.toInt() ?? 0;
 
-    final List<BookingWithProperty> allBookings = await getBookings();
-    final List<BookingWithProperty> upcomingSurveys = allBookings
-        .where(
-          (BookingWithProperty b) =>
-              b.booking.confirmedSurveyDate != null &&
-              b.booking.funnelStatus != FunnelStatus.closedLost &&
-              b.booking.funnelStatus != FunnelStatus.closedWon,
-        )
-        .take(5)
-        .toList(growable: false);
-    final int activeLeadsCount = allBookings
-        .where(
-          (BookingWithProperty b) =>
-              b.booking.funnelStatus != FunnelStatus.closedWon &&
-              b.booking.funnelStatus != FunnelStatus.closedLost,
-        )
-        .length;
+    final List<BookingWithProperty> upcomingSurveys = rawUpcoming is List
+        ? rawUpcoming
+            .whereType<Map<String, dynamic>>()
+            .map(BookingWithProperty.fromRpcJson)
+            .toList(growable: false)
+        : const <BookingWithProperty>[];
 
     return AdminDashboardBundle(
       totalViews: totalViews,
-      totalSearches: searchRows.length,
+      totalSearches: totalSearches,
       activeLeadsCount: activeLeadsCount,
-      scheduledSurveysCount: allBookings
-          .where((BookingWithProperty b) => b.booking.confirmedSurveyDate != null)
-          .length,
+      scheduledSurveysCount: scheduledSurveysCount,
       topProperties: topProperties,
       viewTrend: viewTrend,
       locationStats: allSearchStats
@@ -1303,7 +1607,7 @@ class AdminRepository {
           .where((AdminSearchStatItem item) => item.dimension == 'keyword')
           .toList(growable: false),
       upcomingSurveys: upcomingSurveys,
-      recentBookings: allBookings.take(5).toList(growable: false),
+      recentBookings: recentPage.items,
       usingLocalSeeder: false,
     );
   }
@@ -1430,14 +1734,22 @@ class AdminRepository {
       ),
     ];
 
-    final List<BookingWithProperty> upcomingSurveys = _demoBookings
+    final List<BookingWithProperty> scheduledSurveys = _demoBookings
         .where(
           (BookingWithProperty b) =>
               b.booking.confirmedSurveyDate != null &&
               b.booking.funnelStatus != FunnelStatus.closedLost &&
               b.booking.funnelStatus != FunnelStatus.closedWon,
         )
-        .toList(growable: false);
+        .toList()
+      ..sort((BookingWithProperty a, BookingWithProperty b) {
+        final int byDate = a.booking.confirmedSurveyDate!
+            .compareTo(b.booking.confirmedSurveyDate!);
+        return byDate != 0 ? byDate : a.booking.id.compareTo(b.booking.id);
+      });
+
+    final List<BookingWithProperty> upcomingSurveys =
+        scheduledSurveys.take(5).toList(growable: false);
 
     final int activeLeadsCount = _demoBookings
         .where(
@@ -1451,7 +1763,7 @@ class AdminRepository {
       totalViews: totalViews,
       totalSearches: 290,
       activeLeadsCount: activeLeadsCount,
-      scheduledSurveysCount: upcomingSurveys.length,
+      scheduledSurveysCount: scheduledSurveys.length,
       topProperties: topProperties,
       viewTrend: trendPoints,
       locationStats: locationStats,

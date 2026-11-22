@@ -22,6 +22,7 @@ class AdminBookingDetailScreen extends ConsumerStatefulWidget {
 class _AdminBookingDetailScreenState
     extends ConsumerState<AdminBookingDetailScreen> {
   final TextEditingController _adminNotesController = TextEditingController();
+  late final AdminSessionNotifier _session = ref.read(adminSessionProvider);
   bool _isLoading = true;
   bool _isSaving = false;
   Object? _error;
@@ -33,13 +34,27 @@ class _AdminBookingDetailScreenState
   @override
   void initState() {
     super.initState();
+    _session.addListener(_onSessionChanged);
     Future<void>.microtask(_load);
   }
 
   @override
   void dispose() {
+    _session.removeListener(_onSessionChanged);
     _adminNotesController.dispose();
     super.dispose();
+  }
+
+  void _onSessionChanged() {
+    if (!_session.isLoggedIn && mounted) {
+      setState(() {
+        _item = null;
+        _confirmedSurveyDate = null;
+        _adminNotesController.clear();
+        _isLoading = false;
+        _error = null;
+      });
+    }
   }
 
   Future<void> _load() async {
@@ -336,8 +351,10 @@ class _AdminBookingDetailScreenState
             ),
             const SizedBox(height: AppSpacing.lg),
             TextField(
+              key: const Key('admin_booking_notes_input'),
               controller: _adminNotesController,
               maxLines: 4,
+              maxLength: AdminRepository.maxAdminNotesLength,
               decoration: const InputDecoration(
                 labelText: 'Catatan Admin',
                 hintText: 'Catat hasil komunikasi WhatsApp, kelengkapan berkas KPR, dll.',

@@ -284,12 +284,12 @@ class _AdminMasterDataScreenState extends ConsumerState<AdminMasterDataScreen> {
                 const Text('Akun Admin Aktif', style: AppTypography.h3),
                 const SizedBox(height: AppSpacing.sm),
                 Text(
-                  user?.email ?? 'admin@rindangalam.id',
+                  user?.email ?? '',
                   style: AppTypography.sectionLabel,
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  'Peran: ${user?.role ?? "admin"}',
+                  'Peran: ${user?.role ?? "-"}',
                   style: AppTypography.captionRegular,
                 ),
                 const SizedBox(height: AppSpacing.lg),
@@ -350,7 +350,7 @@ class _CategoryFormDialogState extends State<_CategoryFormDialog> {
       _error = null;
     });
     try {
-      final String cleanSlug = SlugHelper.slugify(_slugController.text);
+      final String cleanSlug = SlugHelper.requireValidSlug(_slugController.text);
       if (widget.existing == null) {
         await widget.repository.createCategory(
           name: _nameController.text,
@@ -417,8 +417,7 @@ class _CategoryFormDialogState extends State<_CategoryFormDialog> {
                   labelText: 'Slug',
                   hintText: 'tanah-kavling',
                 ),
-                validator: (String? v) =>
-                    (v ?? '').trim().isEmpty ? 'Slug wajib diisi' : null,
+                validator: (String? v) => SlugHelper.validate(v),
               ),
               const SizedBox(height: AppSpacing.sm),
               SwitchListTile(
@@ -501,7 +500,7 @@ class _LocationFormDialogState extends State<_LocationFormDialog> {
       _error = null;
     });
     try {
-      final String cleanSlug = SlugHelper.slugify(_slugController.text);
+      final String cleanSlug = SlugHelper.requireValidSlug(_slugController.text);
       if (widget.existing == null) {
         await widget.repository.createLocation(
           city: _cityController.text,
@@ -573,8 +572,7 @@ class _LocationFormDialogState extends State<_LocationFormDialog> {
                   labelText: 'Slug',
                   hintText: 'bandung-kec-cibiru',
                 ),
-                validator: (String? v) =>
-                    (v ?? '').trim().isEmpty ? 'Slug wajib diisi' : null,
+                validator: (String? v) => SlugHelper.validate(v),
               ),
               if (_error != null) ...<Widget>[
                 const SizedBox(height: AppSpacing.sm),

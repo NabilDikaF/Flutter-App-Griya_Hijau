@@ -100,7 +100,7 @@ class AdminScaffold extends ConsumerWidget {
                   children: <Widget>[
                     const Text('Admin Terautentikasi', style: AppTypography.caption),
                     Text(
-                      user?.email ?? 'admin@rindangalam.id',
+                      user?.email ?? '',
                       style: AppTypography.bodyNormal,
                     ),
                   ],
@@ -139,7 +139,7 @@ class AdminScaffold extends ConsumerWidget {
           ? null
           : _AdminDrawer(
               currentPath: currentPath,
-              userEmail: user?.email ?? 'admin@rindangalam.id',
+              userEmail: user?.email ?? '',
               onLogout: () => ref.read(adminSessionProvider).signOut(),
             ),
       body: body,

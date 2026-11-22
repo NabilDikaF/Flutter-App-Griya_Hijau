@@ -301,9 +301,10 @@ class _AdminPropertyFormScreenState
       _priceController.text.replaceAll(RegExp(r'[^0-9]'), ''),
     );
     final String rawSlug = _slugController.text.trim();
-    final String finalSlug = rawSlug.isEmpty
-        ? SlugHelper.slugify(_titleController.text)
-        : SlugHelper.slugify(rawSlug);
+    final String finalSlug = SlugHelper.requireValidSlug(
+      rawSlug.isEmpty ? _titleController.text : rawSlug,
+      fieldLabel: 'Slug properti',
+    );
 
     double? lat = double.tryParse(_latController.text.trim());
     double? lng = double.tryParse(_lngController.text.trim());
@@ -463,7 +464,7 @@ class _AdminPropertyFormScreenState
                 hintText: 'griya-hijau-residence-45-84',
               ),
               validator: (String? v) =>
-                  (v ?? '').trim().isEmpty ? 'Slug properti wajib diisi' : null,
+                  SlugHelper.validate(v, fieldLabel: 'Slug properti'),
             ),
             const SizedBox(height: AppSpacing.md),
             InputDecorator(

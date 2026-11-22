@@ -2,7 +2,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared/shared.dart';
 
-import '../core/env_config.dart';
 import '../data/admin_models.dart';
 import '../data/admin_repository.dart';
 
@@ -237,9 +236,9 @@ class _AdminLoginScreenState extends ConsumerState<AdminLoginScreen> {
                             ),
                             const SizedBox(height: AppSpacing.lg),
                             Text(
-                              EnvConfig.isSupabaseInitialized
-                                  ? 'Hanya akun dengan peran Admin (app_metadata.role = admin) yang berhak mengakses dashboard.'
-                                  : 'Mode fallback lokal aktif (tanpa koneksi Supabase). Akun contoh: admin@rindangalam.id.',
+                              ref.watch(adminRepositoryProvider).isUsingLocalSeeder
+                                  ? 'Mode fallback lokal aktif (hanya debug/pengujian).'
+                                  : 'Hanya akun dengan peran Admin terotorisasi yang berhak mengakses dashboard.',
                               textAlign: TextAlign.center,
                               style: AppTypography.captionRegular,
                             ),

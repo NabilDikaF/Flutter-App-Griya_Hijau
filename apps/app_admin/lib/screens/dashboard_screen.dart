@@ -22,6 +22,7 @@ class AdminDashboardScreen extends ConsumerStatefulWidget {
 }
 
 class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
+  late final AdminSessionNotifier _session = ref.read(adminSessionProvider);
   int _daysWindow = 7;
   int? _selectedTrendPropertyId;
   bool _isLoading = true;
@@ -31,10 +32,29 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
   @override
   void initState() {
     super.initState();
+    _session.addListener(_onSessionChanged);
     Future<void>.microtask(_load);
   }
 
+  @override
+  void dispose() {
+    _session.removeListener(_onSessionChanged);
+    super.dispose();
+  }
+
+  void _onSessionChanged() {
+    if (!_session.isLoggedIn && mounted) {
+      setState(() {
+        _bundle = null;
+        _selectedTrendPropertyId = null;
+        _isLoading = false;
+        _error = null;
+      });
+    }
+  }
+
   Future<void> _load() async {
+    if (!_session.isLoggedIn) return;
     setState(() {
       _isLoading = true;
       _error = null;
@@ -45,9 +65,16 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                 daysWindow: _daysWindow,
                 trendPropertyId: _selectedTrendPropertyId,
               );
-      if (mounted) {
+      if (mounted && _session.isLoggedIn) {
+        final bool selectedStillExists = _selectedTrendPropertyId == null ||
+            bundle.topProperties.any(
+              (AdminPropertyTopItem item) => item.id == _selectedTrendPropertyId,
+            );
         setState(() {
           _bundle = bundle;
+          if (!selectedStillExists) {
+            _selectedTrendPropertyId = null;
+          }
           _isLoading = false;
         });
       }
@@ -127,6 +154,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
             Expanded(
               child: DropdownButtonHideUnderline(
                 child: DropdownButton<int>(
+                  key: const Key('admin_dashboard_period_dropdown'),
                   value: _daysWindow,
                   isExpanded: true,
                   items: const <DropdownMenuItem<int>>[
@@ -320,7 +348,13 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
               ),
               child: DropdownButtonHideUnderline(
                 child: DropdownButton<int?>(
-                  value: _selectedTrendPropertyId,
+                  key: const Key('admin_dashboard_trend_dropdown'),
+                  value: bundle.topProperties.any(
+                    (AdminPropertyTopItem item) =>
+                        item.id == _selectedTrendPropertyId,
+                  )
+                      ? _selectedTrendPropertyId
+                      : null,
                   isExpanded: true,
                   items: <DropdownMenuItem<int?>>[
                     const DropdownMenuItem<int?>(

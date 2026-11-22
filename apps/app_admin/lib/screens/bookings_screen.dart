@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
@@ -20,55 +22,103 @@ class AdminBookingsScreen extends ConsumerStatefulWidget {
 }
 
 class _AdminBookingsScreenState extends ConsumerState<AdminBookingsScreen> {
+  static const int _pageSize = 25;
+
   final TextEditingController _searchController = TextEditingController();
+  late final AdminSessionNotifier _session = ref.read(adminSessionProvider);
+
+  Timer? _searchDebounce;
   FunnelStatus? _statusFilter;
   String _keyword = '';
   bool _isLoading = true;
+  bool _isLoadingMore = false;
   Object? _error;
   List<BookingWithProperty> _bookings = const <BookingWithProperty>[];
+  int _totalCount = 0;
+  int _loadEpoch = 0;
 
   @override
   void initState() {
     super.initState();
-    Future<void>.microtask(_load);
+    _session.addListener(_onSessionChanged);
+    Future<void>.microtask(() => _load(reset: true));
   }
 
   @override
   void dispose() {
+    _session.removeListener(_onSessionChanged);
+    _searchDebounce?.cancel();
     _searchController.dispose();
     super.dispose();
   }
 
-  Future<void> _load() async {
+  void _onSessionChanged() {
+    if (!_session.isLoggedIn && mounted) {
+      _searchDebounce?.cancel();
+      _loadEpoch++;
+      setState(() {
+        _bookings = const <BookingWithProperty>[];
+        _totalCount = 0;
+        _keyword = '';
+        _searchController.clear();
+        _isLoading = false;
+        _isLoadingMore = false;
+        _error = null;
+      });
+    }
+  }
+
+  Future<void> _load({bool reset = true}) async {
+    if (!_session.isLoggedIn) return;
+    if (!reset && (_isLoading || _isLoadingMore || _bookings.length >= _totalCount)) {
+      return;
+    }
+
+    final int epoch = ++_loadEpoch;
+    final int nextOffset = reset ? 0 : _bookings.length;
+
     setState(() {
-      _isLoading = true;
-      _error = null;
+      if (reset) {
+        _isLoading = true;
+        _isLoadingMore = false;
+        _error = null;
+      } else {
+        _isLoadingMore = true;
+      }
     });
+
     try {
-      final List<BookingWithProperty> items =
-          await ref.read(adminRepositoryProvider).getBookings(
+      final AdminBookingsPage page =
+          await ref.read(adminRepositoryProvider).getBookingsPage(
                 statusFilter: _statusFilter,
                 keyword: _keyword,
+                limit: _pageSize,
+                offset: nextOffset,
               );
-      if (mounted) {
-        setState(() {
-          _bookings = items;
-          _isLoading = false;
-        });
-      }
+      if (!mounted || epoch != _loadEpoch || !_session.isLoggedIn) return;
+      setState(() {
+        _bookings = reset
+            ? page.items
+            : <BookingWithProperty>[..._bookings, ...page.items];
+        _totalCount = page.totalCount;
+        _isLoading = false;
+        _isLoadingMore = false;
+        _error = null;
+      });
     } catch (error) {
-      if (mounted) {
-        setState(() {
-          _error = error;
-          _isLoading = false;
-        });
-      }
+      if (!mounted || epoch != _loadEpoch) return;
+      setState(() {
+        _error = error;
+        _isLoading = false;
+        _isLoadingMore = false;
+      });
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final AdminRepository repo = ref.read(adminRepositoryProvider);
+    final bool hasMore = _bookings.length < _totalCount;
 
     return AdminScaffold(
       currentPath: '/bookings',
@@ -86,10 +136,20 @@ class _AdminBookingsScreenState extends ConsumerState<AdminBookingsScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: <Widget>[
                 TextField(
+                  key: const Key('admin_bookings_search_input'),
                   controller: _searchController,
+                  textInputAction: TextInputAction.search,
                   onChanged: (String value) {
-                    _keyword = value;
-                    _load();
+                    setState(() => _keyword = value);
+                    _searchDebounce?.cancel();
+                    _searchDebounce = Timer(
+                      const Duration(milliseconds: 400),
+                      () => _load(reset: true),
+                    );
+                  },
+                  onSubmitted: (_) {
+                    _searchDebounce?.cancel();
+                    _load(reset: true);
                   },
                   decoration: InputDecoration(
                     hintText: 'Cari nama pelanggan, kode booking, atau WA...',
@@ -98,9 +158,10 @@ class _AdminBookingsScreenState extends ConsumerState<AdminBookingsScreen> {
                         ? IconButton(
                             icon: const Icon(Icons.clear),
                             onPressed: () {
+                              _searchDebounce?.cancel();
                               _searchController.clear();
-                              _keyword = '';
-                              _load();
+                              setState(() => _keyword = '');
+                              _load(reset: true);
                             },
                           )
                         : null,
@@ -115,8 +176,9 @@ class _AdminBookingsScreenState extends ConsumerState<AdminBookingsScreen> {
                         label: const Text('Semua'),
                         selected: _statusFilter == null,
                         onSelected: (_) {
+                          _searchDebounce?.cancel();
                           setState(() => _statusFilter = null);
-                          _load();
+                          _load(reset: true);
                         },
                       ),
                       const SizedBox(width: AppSpacing.xs),
@@ -127,8 +189,9 @@ class _AdminBookingsScreenState extends ConsumerState<AdminBookingsScreen> {
                             label: Text(status.label),
                             selected: _statusFilter == status,
                             onSelected: (_) {
+                              _searchDebounce?.cancel();
                               setState(() => _statusFilter = status);
-                              _load();
+                              _load(reset: true);
                             },
                           ),
                         );
@@ -139,6 +202,8 @@ class _AdminBookingsScreenState extends ConsumerState<AdminBookingsScreen> {
               ],
             ),
           ),
+          if (_isLoading && _bookings.isNotEmpty)
+            const LinearProgressIndicator(minHeight: 2),
           Expanded(
             child: _isLoading && _bookings.isEmpty
                 ? const AsyncStateView.loading(
@@ -147,10 +212,10 @@ class _AdminBookingsScreenState extends ConsumerState<AdminBookingsScreen> {
                 : _error != null && _bookings.isEmpty
                     ? AsyncStateView.error(
                         message: 'Gagal memuat data booking.',
-                        onRetry: _load,
+                        onRetry: () => _load(reset: true),
                       )
                     : RefreshIndicator(
-                        onRefresh: _load,
+                        onRefresh: () => _load(reset: true),
                         child: _bookings.isEmpty
                             ? ListView(
                                 children: const <Widget>[
@@ -170,10 +235,27 @@ class _AdminBookingsScreenState extends ConsumerState<AdminBookingsScreen> {
                                   AppSpacing.pagePadding,
                                   AppSpacing.xl,
                                 ),
-                                itemCount: _bookings.length,
+                                itemCount: _bookings.length + (hasMore ? 1 : 0),
                                 separatorBuilder: (_, _) =>
                                     const SizedBox(height: AppSpacing.md),
                                 itemBuilder: (BuildContext context, int index) {
+                                  if (index >= _bookings.length) {
+                                    return OutlinedButton(
+                                      key: const Key('admin_bookings_load_more'),
+                                      onPressed: _isLoadingMore
+                                          ? null
+                                          : () => _load(reset: false),
+                                      child: _isLoadingMore
+                                          ? const SizedBox(
+                                              width: 18,
+                                              height: 18,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                              ),
+                                            )
+                                          : const Text('Muat Lebih Banyak'),
+                                    );
+                                  }
                                   final BookingWithProperty item =
                                       _bookings[index];
                                   return _BookingLeadCard(
@@ -182,7 +264,7 @@ class _AdminBookingsScreenState extends ConsumerState<AdminBookingsScreen> {
                                       await context.push(
                                         '/bookings/${item.booking.id}',
                                       );
-                                      await _load();
+                                      await _load(reset: true);
                                     },
                                     onChatWhatsapp: () =>
                                         ExternalLauncher.openWhatsappToNumber(
@@ -200,7 +282,7 @@ class _AdminBookingsScreenState extends ConsumerState<AdminBookingsScreen> {
                                         repository: repo,
                                       );
                                       if (updated != null) {
-                                        await _load();
+                                        await _load(reset: true);
                                       }
                                     },
                                   );

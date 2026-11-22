@@ -182,6 +182,7 @@ class _SurveyScheduleSheetState extends State<_SurveyScheduleSheet> {
             TextField(
               controller: _notesController,
               maxLines: 3,
+              maxLength: AdminRepository.maxAdminNotesLength,
               decoration: const InputDecoration(
                 labelText: 'Catatan Admin (Opsional)',
                 hintText: 'Contoh: Bertemu di kantor pemasaran 10 menit sebelumnya.',

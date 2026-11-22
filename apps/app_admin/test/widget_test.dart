@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:app_admin/core/env_config.dart';
 import 'package:app_admin/core/image_compressor.dart';
 import 'package:app_admin/core/slug_helper.dart';
 import 'package:app_admin/data/admin_models.dart';
@@ -16,6 +18,181 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:material_ui/material_ui.dart';
 import 'package:shared/shared.dart';
+
+class _SessionTestAdminRepository extends AdminRepository {
+  _SessionTestAdminRepository({
+    AdminSessionUser? initialUser,
+    this.verifiedServerUser,
+    this.throwOnSignOut = false,
+  })  : _activeUser = initialUser,
+        super(null);
+
+  final StreamController<AdminSessionUser?> _authController =
+      StreamController<AdminSessionUser?>.broadcast();
+
+  AdminSessionUser? _activeUser;
+  AdminSessionUser? verifiedServerUser;
+  bool throwOnSignOut;
+  int signOutCallCount = 0;
+  int clearCacheCallCount = 0;
+
+  void emitAuthState(AdminSessionUser? user) {
+    _activeUser = (user != null && user.isAdmin) ? user : null;
+    _authController.add(user);
+  }
+
+  Future<void> closeController() => _authController.close();
+
+  @override
+  Stream<AdminSessionUser?> get authSessionChanges => _authController.stream;
+
+  @override
+  AdminSessionUser? currentAdminUserSync() => _activeUser;
+
+  @override
+  Future<AdminSessionUser?> ensureValidAdminSession() async =>
+      verifiedServerUser;
+
+  @override
+  Future<AdminSessionUser> signInAdmin({
+    required String email,
+    required String password,
+  }) async {
+    final AdminSessionUser user = await super.signInAdmin(
+      email: email,
+      password: password,
+    );
+    _activeUser = user;
+    return user;
+  }
+
+  @override
+  Future<void> signOut() async {
+    signOutCallCount++;
+    try {
+      if (throwOnSignOut) {
+        throw Exception('Simulated network error on signOut');
+      }
+      await super.signOut();
+    } finally {
+      _activeUser = null;
+      clearSensitiveCache();
+    }
+  }
+
+  @override
+  void clearSensitiveCache() {
+    clearCacheCallCount++;
+    super.clearSensitiveCache();
+  }
+}
+
+class _PaginatedSearchTestAdminRepository extends AdminRepository {
+  _PaginatedSearchTestAdminRepository() : super(null);
+
+  final List<({FunnelStatus? status, String keyword, int limit, int offset})>
+      calls =
+      <({FunnelStatus? status, String keyword, int limit, int offset})>[];
+
+  @override
+  AdminSessionUser? currentAdminUserSync() => const AdminSessionUser(
+        id: 'test-admin',
+        email: 'admin@rindangalam.id',
+        role: 'admin',
+      );
+
+  @override
+  Future<AdminBookingsPage> getBookingsPage({
+    FunnelStatus? statusFilter,
+    String keyword = '',
+    int limit = 25,
+    int offset = 0,
+  }) async {
+    calls.add((
+      status: statusFilter,
+      keyword: keyword,
+      limit: limit,
+      offset: offset,
+    ));
+    if (keyword.trim().isNotEmpty || statusFilter != null) {
+      return super.getBookingsPage(
+        statusFilter: statusFilter,
+        keyword: keyword,
+        limit: limit,
+        offset: offset,
+      );
+    }
+    return super.getBookingsPage(
+      statusFilter: statusFilter,
+      keyword: keyword,
+      limit: 1,
+      offset: offset,
+    );
+  }
+}
+
+class _ShiftingTopPropertiesAdminRepository extends AdminRepository {
+  _ShiftingTopPropertiesAdminRepository() : super(null);
+
+  @override
+  AdminSessionUser? currentAdminUserSync() => const AdminSessionUser(
+        id: 'test-admin',
+        email: 'admin@rindangalam.id',
+        role: 'admin',
+      );
+
+  @override
+  Future<AdminDashboardBundle> loadDashboard({
+    required int daysWindow,
+    int? trendPropertyId,
+  }) async {
+    final AdminDashboardBundle base = await super.loadDashboard(
+      daysWindow: daysWindow,
+      trendPropertyId: trendPropertyId,
+    );
+    final List<AdminPropertyTopItem> shiftedTop = daysWindow == 7
+        ? const <AdminPropertyTopItem>[
+            AdminPropertyTopItem(
+              id: 101,
+              slug: 'unit-a',
+              title: 'Unit Top 101',
+              categoryName: 'Komplek Perumahan',
+              city: 'Bandung',
+              district: 'Kec. Sukamaju',
+              viewsCount: 50,
+              availabilityStatus: AvailabilityStatus.available,
+              isPublished: true,
+            ),
+          ]
+        : const <AdminPropertyTopItem>[
+            AdminPropertyTopItem(
+              id: 202,
+              slug: 'unit-b',
+              title: 'Unit Top 202',
+              categoryName: 'Ruko',
+              city: 'Bandung',
+              district: 'Kec. Sari Indah',
+              viewsCount: 80,
+              availabilityStatus: AvailabilityStatus.available,
+              isPublished: true,
+            ),
+          ];
+    return AdminDashboardBundle(
+      totalViews: base.totalViews,
+      totalSearches: base.totalSearches,
+      activeLeadsCount: base.activeLeadsCount,
+      scheduledSurveysCount: base.scheduledSurveysCount,
+      topProperties: shiftedTop,
+      viewTrend: base.viewTrend,
+      locationStats: base.locationStats,
+      categoryStats: base.categoryStats,
+      keywordStats: base.keywordStats,
+      upcomingSurveys: base.upcomingSurveys,
+      recentBookings: base.recentBookings,
+      usingLocalSeeder: false,
+    );
+  }
+}
 
 Future<void> _signInAsAdmin(WidgetTester tester, {Key? scopeKey}) async {
   await tester.pumpWidget(ProviderScope(key: scopeKey, child: const AdminApp()));
@@ -366,5 +543,405 @@ void main() {
       expect(find.byType(AdminBookingsScreen), findsOneWidget);
       expect(tester.takeException(), isNull);
     }
+  });
+
+  group('Stage-3 Session lifecycle & Security Hardening (B3)', () {
+    test('Admin hardening utilities: SlugHelper, ImageCompressor isolate/bounds, random photo UUID, BookingWithProperty.fromRpcJson, resolveImageUrl, adminNotes cap, hasMapsApiKey', () async {
+      // SlugHelper rejects punctuation-only / empty slugs.
+      expect(SlugHelper.validate(''), isNotNull);
+      expect(SlugHelper.validate('   ---!!!  '), isNotNull);
+      expect(SlugHelper.validate('Griya Hijau!'), isNull);
+      expect(
+        () => SlugHelper.requireValidSlug('---!!!'),
+        throwsFormatException,
+      );
+
+      // ImageCompressor enforces dimension bounds & works inside Isolate.run.
+      final img.Image wide = img.Image(width: 120, height: 40);
+      img.fill(wide, color: img.ColorRgb8(16, 185, 129));
+      final Uint8List widePng = Uint8List.fromList(img.encodePng(wide));
+      expect(
+        () => ImageCompressor.compressToJpeg(widePng, maxDimensionPx: 100),
+        throwsFormatException,
+      );
+      final Uint8List asyncCompressed =
+          await ImageCompressor.compressToJpegAsync(widePng);
+      expect(img.decodeJpg(asyncCompressed), isNotNull);
+
+      // Random UUID photo filename (2.2) matches Stage-1 SQL CHECK and is unique.
+      final RegExp sqlPathPattern = RegExp(
+        r'^properties/42/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.jpg$',
+      );
+      final String p1 = AdminRepository.generateRandomPhotoPath(42);
+      final String p2 = AdminRepository.generateRandomPhotoPath(42);
+      expect(sqlPathPattern.hasMatch(p1), isTrue);
+      expect(sqlPathPattern.hasMatch(p2), isTrue);
+      expect(p1, isNot(equals(p2)));
+      expect(p1, isNot(endsWith('main.jpg')));
+
+      // Flat RPC booking row parsing preserves customer_whatsapp for admin CRM.
+      final BookingWithProperty rpcItem = BookingWithProperty.fromRpcJson(
+        <String, dynamic>{
+          'id': 11,
+          'booking_code': 'BK-20261122-0123456789ABCDEF',
+          'property_id': 1,
+          'customer_name': 'Sari Kusuma',
+          'customer_whatsapp': '6281234567890',
+          'intent_type': 'book_unit',
+          'payment_plan': 'kpr',
+          'funnel_status': 'new',
+          'property_title': 'Griya Hijau Residence',
+          'property_slug': 'griya-hijau-residence',
+          'property_category_name': 'Komplek Perumahan',
+          'property_district': 'Kec. Sukamaju',
+          'property_availability_status': 'booked',
+        },
+      );
+      expect(rpcItem.booking.customerWhatsapp, '6281234567890');
+      expect(rpcItem.propertyAvailabilityStatus, AvailabilityStatus.booked);
+
+      // resolveImageUrl normalizes scheme and rejects unsafe protocols/paths.
+      final AdminRepository demoRepo = AdminRepository(null);
+      expect(
+        demoRepo.resolveImageUrl('  HTTPS://cdn.example.com/photo.jpg  '),
+        'https://cdn.example.com/photo.jpg',
+      );
+      expect(demoRepo.resolveImageUrl('HTTP://cdn.example.com/a.jpg'), isNull);
+      expect(demoRepo.resolveImageUrl('javascript:alert(1)'), isNull);
+      expect(demoRepo.resolveImageUrl('../secret.jpg'), isNull);
+
+      // admin_notes limit <= 2000 chars.
+      await expectLater(
+        demoRepo.updateBooking(
+          bookingId: 1,
+          funnelStatus: FunnelStatus.contacted,
+          adminNotes: 'x' * 2001,
+        ),
+        throwsArgumentError,
+      );
+
+      // EnvConfig.hasMapsApiKey stays false when MAPS_API_KEY is empty even if Supabase initialized.
+      final bool prevSupabase = EnvConfig.isSupabaseInitialized;
+      addTearDown(() => EnvConfig.isSupabaseInitialized = prevSupabase);
+      EnvConfig.isSupabaseInitialized = true;
+      expect(EnvConfig.hasMapsApiKey, isFalse);
+    });
+
+    testWidgets('Fail-closed release mode rejects offline demo mode and EnvConfig error renders blocker UI', (
+      WidgetTester tester,
+    ) async {
+      final bool prevSupabase = EnvConfig.isSupabaseInitialized;
+      final String? prevErr = EnvConfig.supabaseInitError;
+      addTearDown(() {
+        EnvConfig.isSupabaseInitialized = prevSupabase;
+        EnvConfig.supabaseInitError = prevErr;
+      });
+
+      EnvConfig.isSupabaseInitialized = false;
+      EnvConfig.supabaseInitError =
+          'Gagal terhubung ke server autentikasi. Periksa koneksi internet Anda lalu coba lagi.';
+
+      await tester.pumpWidget(
+        const ProviderScope(
+          key: ValueKey<String>('admin_release_fail_closed'),
+          child: AdminApp(requireSupabase: true),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('admin_release_connectivity_error_screen')),
+        findsOneWidget,
+      );
+      expect(find.byType(AdminLoginScreen), findsNothing);
+      expect(find.textContaining('admin@rindangalam.id'), findsNothing);
+
+      final AdminRepository strictRepo =
+          AdminRepository(null, allowLocalSeeder: false);
+      await expectLater(
+        strictRepo.signInAdmin(
+          email: 'admin@rindangalam.id',
+          password: 'password123',
+        ),
+        throwsStateError,
+      );
+      await expectLater(
+        strictRepo.loadDashboard(daysWindow: 7),
+        throwsStateError,
+      );
+      await expectLater(strictRepo.getBookingsPage(), throwsStateError);
+      await expectLater(strictRepo.getCategories(), throwsStateError);
+    });
+
+    testWidgets('Session listener redirects to login and clears PII when session is revoked via auth stream', (
+      WidgetTester tester,
+    ) async {
+      final _SessionTestAdminRepository repo = _SessionTestAdminRepository(
+        initialUser: const AdminSessionUser(
+          id: 'admin-1',
+          email: 'admin@rindangalam.id',
+          role: 'admin',
+        ),
+      );
+      addTearDown(repo.closeController);
+
+      await tester.pumpWidget(
+        ProviderScope(
+          key: const ValueKey<String>('session_revoked_scope'),
+          overrides: [adminRepositoryProvider.overrideWithValue(repo)],
+          child: const AdminApp(requireSupabase: false),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Leads'));
+      await tester.pumpAndSettle();
+      expect(find.byType(AdminBookingsScreen), findsOneWidget);
+      expect(find.text('Rina Marlina'), findsOneWidget);
+
+      // Revoke session from GoTrue auth state stream.
+      repo.emitAuthState(null);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(AdminLoginScreen), findsOneWidget);
+      expect(find.byType(AdminBookingsScreen), findsNothing);
+      expect(find.text('Rina Marlina'), findsNothing);
+      expect(repo.clearCacheCallCount, greaterThanOrEqualTo(1));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('Session listener revokes access, clears cache, and signs out when admin role is stripped', (
+      WidgetTester tester,
+    ) async {
+      final _SessionTestAdminRepository repo = _SessionTestAdminRepository(
+        initialUser: const AdminSessionUser(
+          id: 'admin-2',
+          email: 'admin@rindangalam.id',
+          role: 'admin',
+        ),
+      );
+      addTearDown(repo.closeController);
+
+      await tester.pumpWidget(
+        ProviderScope(
+          key: const ValueKey<String>('role_lost_scope'),
+          overrides: [adminRepositoryProvider.overrideWithValue(repo)],
+          child: const AdminApp(requireSupabase: false),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(AdminDashboardScreen), findsOneWidget);
+
+      // Role changed from admin -> customer.
+      repo.emitAuthState(
+        const AdminSessionUser(
+          id: 'admin-2',
+          email: 'admin@rindangalam.id',
+          role: 'customer',
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(AdminLoginScreen), findsOneWidget);
+      expect(find.byType(AdminDashboardScreen), findsNothing);
+      expect(repo.signOutCallCount, greaterThanOrEqualTo(1));
+      expect(repo.clearCacheCallCount, greaterThanOrEqualTo(1));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('signOut still clears session state, cache, and redirects even when network signOut fails', (
+      WidgetTester tester,
+    ) async {
+      final _SessionTestAdminRepository repo = _SessionTestAdminRepository(
+        initialUser: const AdminSessionUser(
+          id: 'admin-3',
+          email: 'admin@rindangalam.id',
+          role: 'admin',
+        ),
+        throwOnSignOut: true,
+      );
+      addTearDown(repo.closeController);
+
+      await tester.pumpWidget(
+        ProviderScope(
+          key: const ValueKey<String>('signout_network_fail_scope'),
+          overrides: [adminRepositoryProvider.overrideWithValue(repo)],
+          child: const AdminApp(requireSupabase: false),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Akun Admin'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Keluar'));
+      await tester.pumpAndSettle();
+
+      expect(repo.signOutCallCount, 1);
+      expect(repo.clearCacheCallCount, greaterThanOrEqualTo(1));
+      expect(find.byType(AdminLoginScreen), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    test('AdminSessionNotifier.initialize clears stale session when server verification rejects', () async {
+      final _SessionTestAdminRepository repo = _SessionTestAdminRepository(
+        initialUser: const AdminSessionUser(
+          id: 'admin-4',
+          email: 'admin@rindangalam.id',
+          role: 'admin',
+        ),
+        verifiedServerUser: null,
+      );
+      final AdminSessionNotifier notifier = AdminSessionNotifier(repo);
+      expect(notifier.isLoggedIn, isTrue);
+
+      await notifier.initialize();
+      expect(notifier.isLoggedIn, isFalse);
+      expect(notifier.currentUser, isNull);
+      expect(repo.clearCacheCallCount, 1);
+
+      notifier.dispose();
+      await repo.closeController();
+    });
+
+    testWidgets('CRM Bookings debounces search by 400ms, paginates via Load More, and guards admin_notes maxLength 2000', (
+      WidgetTester tester,
+    ) async {
+      final _PaginatedSearchTestAdminRepository repo =
+          _PaginatedSearchTestAdminRepository();
+
+      final AdminBookingsPage page1 = await AdminRepository(null).getBookingsPage(
+        limit: 2,
+        offset: 0,
+      );
+      final AdminBookingsPage page2 = await AdminRepository(null).getBookingsPage(
+        limit: 2,
+        offset: 2,
+      );
+      expect(page1.items, hasLength(2));
+      expect(page1.totalCount, 4);
+      expect(page1.hasMore, isTrue);
+      expect(page2.items, hasLength(2));
+      expect(page2.hasMore, isFalse);
+
+      await tester.pumpWidget(
+        ProviderScope(
+          key: const ValueKey<String>('crm_debounce_pagination_scope'),
+          overrides: [adminRepositoryProvider.overrideWithValue(repo)],
+          child: const AdminApp(requireSupabase: false),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Leads'));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('admin_bookings_load_more')), findsOneWidget);
+      await tester.ensureVisible(
+        find.byKey(const Key('admin_bookings_load_more')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('admin_bookings_load_more')));
+      await tester.pumpAndSettle();
+      expect(repo.calls.last.offset, 1);
+
+      repo.calls.clear();
+      await tester.enterText(
+        find.byKey(const Key('admin_bookings_search_input')),
+        'Budi',
+      );
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(repo.calls, isEmpty);
+
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.pumpAndSettle();
+      expect(repo.calls, hasLength(1));
+      expect(repo.calls.single.keyword, 'Budi');
+      expect(find.text('Budi Santoso'), findsOneWidget);
+
+      await tester.tap(find.text('Budi Santoso'));
+      await tester.pumpAndSettle();
+      final TextField notesField = tester.widget<TextField>(
+        find.byKey(const Key('admin_booking_notes_input')),
+      );
+      expect(notesField.maxLength, 2000);
+    });
+
+    testWidgets('Dashboard DropdownButton safely resets when selected trend property leaves top-10', (
+      WidgetTester tester,
+    ) async {
+      final _ShiftingTopPropertiesAdminRepository repo =
+          _ShiftingTopPropertiesAdminRepository();
+
+      await tester.pumpWidget(
+        ProviderScope(
+          key: const ValueKey<String>('dashboard_dropdown_guard_scope'),
+          overrides: [adminRepositoryProvider.overrideWithValue(repo)],
+          child: const AdminApp(requireSupabase: false),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final Finder dashboardScroll = find
+          .descendant(
+            of: find.byType(AdminDashboardScreen),
+            matching: find.byType(Scrollable),
+          )
+          .first;
+
+      final Finder trendDropdownFinder =
+          find.byKey(const Key('admin_dashboard_trend_dropdown'));
+
+      await tester.scrollUntilVisible(
+        trendDropdownFinder,
+        300,
+        scrollable: dashboardScroll,
+      );
+      await tester.ensureVisible(trendDropdownFinder);
+      await tester.pumpAndSettle();
+      await tester.tap(trendDropdownFinder);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Unit Top 101').last);
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.widget<DropdownButton<int?>>(trendDropdownFinder).value,
+        101,
+      );
+
+      // Switch period window so loadDashboard returns Unit Top 202 without 101.
+      final Finder periodDropdownFinder =
+          find.byKey(const Key('admin_dashboard_period_dropdown'));
+      await tester.scrollUntilVisible(
+        periodDropdownFinder,
+        -300,
+        scrollable: dashboardScroll,
+      );
+      await tester.ensureVisible(periodDropdownFinder);
+      await tester.pumpAndSettle();
+      await tester.tap(periodDropdownFinder);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('30 hari terakhir').last);
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+
+      await tester.scrollUntilVisible(
+        trendDropdownFinder,
+        300,
+        scrollable: dashboardScroll,
+      );
+      await tester.ensureVisible(trendDropdownFinder);
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      final DropdownButton<int?> resetDropdown =
+          tester.widget<DropdownButton<int?>>(trendDropdownFinder);
+      expect(resetDropdown.value, isNull);
+      expect(
+        resetDropdown.items!
+            .map((DropdownMenuItem<int?> item) => item.value),
+        <int?>[null, 202],
+      );
+    });
   });
 }

@@ -155,6 +155,22 @@ class BookingWithProperty {
     );
   }
 
+  /// Parser untuk hasil flat RPC `admin_list_bookings` dan `admin_upcoming_surveys`.
+  factory BookingWithProperty.fromRpcJson(Map<String, dynamic> json) {
+    final Booking parsedBooking = Booking.fromJson(json);
+    return BookingWithProperty(
+      booking: parsedBooking,
+      propertyTitle: json['property_title'] as String? ??
+          'Properti #${parsedBooking.propertyId}',
+      propertySlug: json['property_slug'] as String? ?? '',
+      propertyCategoryName: json['property_category_name'] as String? ?? '',
+      propertyDistrict: json['property_district'] as String? ?? '',
+      propertyAvailabilityStatus: AvailabilityStatus.fromValue(
+        json['property_availability_status'] as String? ?? 'available',
+      ),
+    );
+  }
+
   BookingWithProperty copyWith({
     Booking? booking,
     AvailabilityStatus? propertyAvailabilityStatus,
@@ -169,6 +185,23 @@ class BookingWithProperty {
           propertyAvailabilityStatus ?? this.propertyAvailabilityStatus,
     );
   }
+}
+
+/// Hasil paginasi CRM Leads Booking (`rpc('admin_list_bookings')`).
+class AdminBookingsPage {
+  const AdminBookingsPage({
+    required this.items,
+    required this.totalCount,
+    required this.limit,
+    required this.offset,
+  });
+
+  final List<BookingWithProperty> items;
+  final int totalCount;
+  final int limit;
+  final int offset;
+
+  bool get hasMore => offset + items.length < totalCount;
 }
 
 /// Hasil penghapusan / penonaktifan properti.

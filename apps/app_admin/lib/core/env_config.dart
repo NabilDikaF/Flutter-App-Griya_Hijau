@@ -16,9 +16,12 @@ abstract final class EnvConfig {
   /// Membuat widget/unit test tetap berjalan dengan data lokal in-memory.
   static bool isSupabaseInitialized = false;
 
+  /// Pesan kegagalan inisialisasi Supabase (dipakai fail-closed pada mode rilis).
+  static String? supabaseInitError;
+
   static bool get hasSupabaseConfig =>
       supabaseUrl.trim().isNotEmpty && supabaseAnonKey.trim().isNotEmpty;
 
   static bool get hasMapsApiKey =>
-      !mapsDisabled && (isSupabaseInitialized || mapsApiKey.trim().isNotEmpty);
+      !mapsDisabled && mapsApiKey.trim().isNotEmpty;
 }
