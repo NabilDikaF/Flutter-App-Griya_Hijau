@@ -314,6 +314,60 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('CheckBookingScreen masks booking code and PII on phone-only lookup', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(const ProviderScope(child: CustomerApp()));
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NavigationBar),
+        matching: find.text('Cek Booking'),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const Key('check_booking_wa_input')),
+      '081234567890',
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('check_booking_submit_button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('BK-***********'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(Card).last,
+        matching: find.text('BK-***********'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('R***'), findsOneWidget);
+    expect(find.text('62812****890'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(Card).last,
+        matching: find.text('BK-20261114-DEMO1'),
+      ),
+      findsNothing,
+    );
+    expect(find.text('Rina Marlina'), findsNothing);
+    expect(
+      find.text('Ingin melihat rumah contoh bersama keluarga.'),
+      findsNothing,
+    );
+
+    await tester.drag(find.byType(ListView), const Offset(0, -250));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('BK-***********'));
+    await tester.pump();
+    expect(find.textContaining('berhasil disalin'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   test('ExternalLauncher allows official HTTPS Google Maps URLs and rejects unsafe schemes/hosts', () {
     expect(
       ExternalLauncher.isAllowedGoogleMapsUri(

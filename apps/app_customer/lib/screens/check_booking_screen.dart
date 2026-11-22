@@ -162,25 +162,32 @@ class _CheckBookingScreenState extends ConsumerState<CheckBookingScreen> {
                         'Periksa kembali kode booking (mis. BK-20261114-DEMO1) atau nomor WhatsApp yang Anda gunakan saat pengajuan.',
                   )
                 else if (_hasSearched)
-                  for (final CustomerBookingLookupResult item
-                      in _results) ...<Widget>[
-                    _BookingResultCard(
-                      item: item,
-                      onCopyCode: () => _copyBookingCode(item.booking.bookingCode),
-                      onOpenProperty: item.propertySlug.isEmpty
-                          ? null
-                          : () => context.push('/properti/${item.propertySlug}'),
-                      onOpenWhatsapp: () {
-                        final String message =
-                            'Halo admin ${CompanyConfig.brandName}, saya ingin menanyakan tindak lanjut booking dengan kode *${item.booking.bookingCode}* untuk unit *${item.propertyTitle}*.';
-                        ExternalLauncher.openWhatsapp(
-                          context,
-                          prefilledMessage: message,
-                        );
-                      },
-                    ),
-                    const SizedBox(height: AppSpacing.md),
-                  ]
+                  ..._results.expand((CustomerBookingLookupResult item) {
+                    final bool isMaskedCode =
+                        item.booking.bookingCode.contains('*');
+                    final String whatsappMessage = isMaskedCode
+                        ? 'Halo admin ${CompanyConfig.brandName}, saya ingin menanyakan tindak lanjut booking untuk unit *${item.propertyTitle}*.'
+                        : 'Halo admin ${CompanyConfig.brandName}, saya ingin menanyakan tindak lanjut booking dengan kode *${item.booking.bookingCode}* untuk unit *${item.propertyTitle}*.';
+                    return <Widget>[
+                      _BookingResultCard(
+                        item: item,
+                        onCopyCode: isMaskedCode
+                            ? null
+                            : () => _copyBookingCode(item.booking.bookingCode),
+                        onOpenProperty: item.propertySlug.isEmpty
+                            ? null
+                            : () => context
+                                .push('/properti/${item.propertySlug}'),
+                        onOpenWhatsapp: () {
+                          ExternalLauncher.openWhatsapp(
+                            context,
+                            prefilledMessage: whatsappMessage,
+                          );
+                        },
+                      ),
+                      const SizedBox(height: AppSpacing.md),
+                    ];
+                  })
                 else
                   const _StatusNoticeCard(
                     icon: Icons.fact_check_outlined,
@@ -391,7 +398,7 @@ class _BookingResultCard extends StatelessWidget {
   });
 
   final CustomerBookingLookupResult item;
-  final VoidCallback onCopyCode;
+  final VoidCallback? onCopyCode;
   final VoidCallback? onOpenProperty;
   final VoidCallback onOpenWhatsapp;
 

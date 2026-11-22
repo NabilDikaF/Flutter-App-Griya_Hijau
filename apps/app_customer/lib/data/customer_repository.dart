@@ -388,18 +388,20 @@ class CustomerRepository {
           .map(CustomerBookingLookupResult.fromRpcJson)
           .toList(growable: true);
 
-      // Gabungkan booking yang baru saja dibuat di sesi ini bila belum kembali dari RPC.
-      final Set<String> returnedCodes = results
-          .map((CustomerBookingLookupResult item) => item.booking.bookingCode)
-          .toSet();
-      for (final CustomerBookingLookupResult cached
-          in _lookupSessionBookings(
-            bookingCode: cleanCode,
-            customerWhatsapp: cleanWa,
-            excludeDemoFallback: true,
-          )) {
-        if (!returnedCodes.contains(cached.booking.bookingCode)) {
-          results.add(cached);
+      // Gabungkan booking sesi ini hanya saat pencarian kode spesifik (hindari duplikat bermasker pada pencarian nomor WA).
+      if (cleanCode != null) {
+        final Set<String> returnedCodes = results
+            .map((CustomerBookingLookupResult item) => item.booking.bookingCode)
+            .toSet();
+        for (final CustomerBookingLookupResult cached
+            in _lookupSessionBookings(
+              bookingCode: cleanCode,
+              customerWhatsapp: cleanWa,
+              excludeDemoFallback: true,
+            )) {
+          if (!returnedCodes.contains(cached.booking.bookingCode)) {
+            results.add(cached);
+          }
         }
       }
       return results;
@@ -435,9 +437,13 @@ class CustomerRepository {
         orElse: () => SeedData.properties.first,
       );
 
+      final Booking resultBooking = bookingCode != null
+          ? booking
+          : _maskBookingForPhoneLookup(booking);
+
       matches.add(
         CustomerBookingLookupResult(
-          booking: booking,
+          booking: resultBooking,
           propertyTitle: property.title,
           propertySlug: property.slug,
           propertyPrice: property.price,
@@ -449,6 +455,32 @@ class CustomerRepository {
     }
 
     return matches.take(5).toList(growable: false);
+  }
+
+  static Booking _maskBookingForPhoneLookup(Booking booking) {
+    final String trimmedName = booking.customerName.trim();
+    final String maskedName =
+        trimmedName.length <= 1 ? '***' : '${trimmedName[0]}***';
+    final String wa = booking.customerWhatsapp;
+    final String maskedWa = wa.length > 8
+        ? '${wa.substring(0, 5)}****${wa.substring(wa.length - 3)}'
+        : '****';
+    return Booking(
+      id: booking.id,
+      bookingCode: 'BK-***********',
+      propertyId: booking.propertyId,
+      customerName: maskedName,
+      customerWhatsapp: maskedWa,
+      intentType: booking.intentType,
+      preferredSurveyDate: booking.preferredSurveyDate,
+      confirmedSurveyDate: booking.confirmedSurveyDate,
+      paymentPlan: booking.paymentPlan,
+      customerNotes: null,
+      funnelStatus: booking.funnelStatus,
+      adminNotes: booking.adminNotes,
+      createdAt: booking.createdAt,
+      updatedAt: booking.updatedAt,
+    );
   }
 
   String? resolveImageUrl(String? imagePath) {
