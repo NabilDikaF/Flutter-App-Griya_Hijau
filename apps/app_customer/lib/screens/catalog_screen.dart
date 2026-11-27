@@ -6,6 +6,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:shared/shared.dart';
 
 import '../data/customer_repository.dart';
+import '../widgets/app_dropdown.dart';
 import '../widgets/customer_scaffold.dart';
 import '../widgets/filter_bottom_sheet.dart';
 
@@ -329,45 +330,34 @@ class _CatalogScreenState extends ConsumerState<CatalogScreen> {
               ),
               const SizedBox(width: AppSpacing.md),
               Expanded(
-                child: Container(
-                  height: AppSpacing.buttonHeight,
-                  padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-                  decoration: BoxDecoration(
-                    color: AppColors.white,
-                    borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-                    border: Border.all(color: AppColors.slate200),
+                child: AppDropdown<String>(
+                  key: const Key('catalog_sort_dropdown'),
+                  value: _filter.sortBy,
+                  textStyle: AppTypography.bodyNormal.copyWith(
+                    color: AppColors.slate900,
+                    fontWeight: FontWeight.w500,
                   ),
-                  child: DropdownButtonHideUnderline(
-                    child: DropdownButton<String>(
-                      isExpanded: true,
-                      value: _filter.sortBy,
-                      style: AppTypography.bodyNormal.copyWith(
-                        color: AppColors.slate900,
-                        fontWeight: FontWeight.w500,
-                      ),
-                      items: const <DropdownMenuItem<String>>[
-                        DropdownMenuItem<String>(
-                          value: 'newest',
-                          child: Text('Terbaru'),
-                        ),
-                        DropdownMenuItem<String>(
-                          value: 'price_asc',
-                          child: Text('Harga Termurah'),
-                        ),
-                        DropdownMenuItem<String>(
-                          value: 'price_desc',
-                          child: Text('Harga Termahal'),
-                        ),
-                      ],
-                      onChanged: (String? value) {
-                        if (value == null) return;
-                        setState(() {
-                          _filter = _filter.copyWith(sortBy: value, offset: 0);
-                        });
-                        _runSearch(resetPagination: true);
-                      },
+                  items: const <AppDropdownItem<String>>[
+                    AppDropdownItem<String>(
+                      value: 'newest',
+                      label: 'Terbaru',
                     ),
-                  ),
+                    AppDropdownItem<String>(
+                      value: 'price_asc',
+                      label: 'Harga Termurah',
+                    ),
+                    AppDropdownItem<String>(
+                      value: 'price_desc',
+                      label: 'Harga Termahal',
+                    ),
+                  ],
+                  onChanged: (String? value) {
+                    if (value == null) return;
+                    setState(() {
+                      _filter = _filter.copyWith(sortBy: value, offset: 0);
+                    });
+                    _runSearch(resetPagination: true);
+                  },
                 ),
               ),
             ],

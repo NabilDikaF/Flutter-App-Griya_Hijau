@@ -2,9 +2,7 @@ import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared/shared.dart';
 
-import '../core/external_launcher.dart';
-
-/// Kerangka navigasi utama Customer App sesuai `Navbar/Mobile`, `Menu Mobile`, & `Footer/Mobile`.
+/// Kerangka navigasi utama Customer App sesuai `Navbar/Mobile` & `Footer/Mobile`.
 /// Tidak menyertakan tombol atau fitur AI sesuai cakupan Paket Semi Full.
 class CustomerScaffold extends StatelessWidget {
   const CustomerScaffold({
@@ -53,6 +51,7 @@ class CustomerScaffold extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         automaticallyImplyLeading: false,
+        titleSpacing: AppSpacing.pagePadding,
         leading: showBackButton
             ? IconButton(
                 tooltip: 'Kembali',
@@ -65,13 +64,7 @@ class CustomerScaffold extends StatelessWidget {
                   }
                 },
               )
-            : Builder(
-                builder: (BuildContext scaffoldContext) => IconButton(
-                  tooltip: 'Menu Navigasi',
-                  icon: const Icon(Icons.menu),
-                  onPressed: () => Scaffold.of(scaffoldContext).openDrawer(),
-                ),
-              ),
+            : null,
         title: title != null
             ? Text(title!)
             : Row(
@@ -111,7 +104,6 @@ class CustomerScaffold extends StatelessWidget {
                 ],
               ),
       ),
-      drawer: _CustomerNavigationDrawer(currentPath: currentPath),
       body: body,
       bottomNavigationBar: bottomNavigationBar ??
           (showBottomNav && !showBackButton && currentPath != '/booking-berhasil'
@@ -157,164 +149,6 @@ class CustomerScaffold extends StatelessWidget {
                   ],
                 )
               : null),
-    );
-  }
-}
-
-class _CustomerNavigationDrawer extends StatelessWidget {
-  const _CustomerNavigationDrawer({required this.currentPath});
-
-  final String currentPath;
-
-  @override
-  Widget build(BuildContext context) {
-    return Drawer(
-      backgroundColor: AppColors.white,
-      child: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: <Widget>[
-            Padding(
-              padding: const EdgeInsets.all(AppSpacing.lg),
-              child: Row(
-                children: <Widget>[
-                  Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: AppColors.emerald500,
-                      borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-                    ),
-                    child: const Icon(
-                      Icons.home_work_outlined,
-                      color: AppColors.white,
-                      size: 22,
-                    ),
-                  ),
-                  const SizedBox(width: AppSpacing.md),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: const <Widget>[
-                        Text(
-                          CompanyConfig.brandName,
-                          style: AppTypography.h3,
-                        ),
-                        Text(
-                          CompanyConfig.companyName,
-                          style: AppTypography.captionRegular,
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const Divider(height: 1),
-            const SizedBox(height: AppSpacing.sm),
-            _DrawerItem(
-              icon: Icons.home_outlined,
-              label: 'Beranda',
-              selected: currentPath == '/',
-              onTap: () {
-                Navigator.of(context).pop();
-                context.go('/');
-              },
-            ),
-            _DrawerItem(
-              icon: Icons.apartment_outlined,
-              label: 'Katalog Properti',
-              selected: currentPath == '/katalog',
-              onTap: () {
-                Navigator.of(context).pop();
-                context.go('/katalog');
-              },
-            ),
-            _DrawerItem(
-              icon: Icons.fact_check_outlined,
-              label: 'Cek Booking',
-              selected: currentPath == '/cek-booking',
-              onTap: () {
-                Navigator.of(context).pop();
-                context.go('/cek-booking');
-              },
-            ),
-            _DrawerItem(
-              icon: Icons.info_outline,
-              label: 'Tentang Kami',
-              selected: currentPath == '/tentang-kami',
-              onTap: () {
-                Navigator.of(context).pop();
-                context.go('/tentang-kami');
-              },
-            ),
-            const Spacer(),
-            Padding(
-              padding: const EdgeInsets.all(AppSpacing.lg),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  ElevatedButton.icon(
-                    onPressed: () {
-                      Navigator.of(context).pop();
-                      context.go('/katalog');
-                    },
-                    icon: const Icon(Icons.search, size: 18),
-                    label: const Text('Lihat Katalog Properti'),
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  OutlinedButton.icon(
-                    onPressed: () {
-                      Navigator.of(context).pop();
-                      ExternalLauncher.openWhatsapp(
-                        context,
-                        prefilledMessage:
-                            'Halo admin ${CompanyConfig.brandName}, saya ingin bertanya mengenai unit properti yang tersedia.',
-                      );
-                    },
-                    icon: const Icon(Icons.chat_outlined, size: 18),
-                    label: const Text('Hubungi via WhatsApp'),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _DrawerItem extends StatelessWidget {
-  const _DrawerItem({
-    required this.icon,
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListTile(
-      leading: Icon(
-        icon,
-        color: selected ? AppColors.emerald800 : AppColors.slate500,
-      ),
-      title: Text(
-        label,
-        style: AppTypography.bodyMedium15.copyWith(
-          fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-          color: selected ? AppColors.emerald800 : AppColors.slate900,
-        ),
-      ),
-      selected: selected,
-      selectedTileColor: AppColors.emerald50,
-      onTap: onTap,
     );
   }
 }

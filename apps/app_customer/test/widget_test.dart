@@ -8,6 +8,7 @@ import 'package:app_customer/screens/booking_success_screen.dart';
 import 'package:app_customer/screens/catalog_screen.dart';
 import 'package:app_customer/screens/check_booking_screen.dart';
 import 'package:app_customer/screens/property_detail_screen.dart';
+import 'package:app_customer/widgets/app_dropdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
@@ -741,5 +742,540 @@ void main() {
     expect(EnvConfig.isSupabaseInitialized, isFalse);
     expect(EnvConfig.supabaseInitError, contains('SUPABASE_URL'));
     expect(EnvConfig.supabaseInitError, contains('SUPABASE_ANON_KEY'));
+  });
+
+  testWidgets('CustomerScaffold removes sidebar drawer and hamburger button while keeping AppBar brand & bottom navigation', (
+    WidgetTester tester,
+  ) async {
+    Future<void> expectNoDrawerOrHamburger() async {
+      expect(find.byIcon(Icons.menu), findsNothing);
+      expect(find.byTooltip('Menu Navigasi'), findsNothing);
+      expect(find.byType(Drawer), findsNothing);
+      final Scaffold scaffold =
+          tester.widget<Scaffold>(find.byType(Scaffold).first);
+      expect(scaffold.drawer, isNull);
+    }
+
+    await tester.pumpWidget(
+      const ProviderScope(
+        key: ValueKey<String>('scaffold_home'),
+        child: CustomerApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await expectNoDrawerOrHamburger();
+    expect(find.byIcon(Icons.home_work_outlined), findsOneWidget);
+    expect(find.text(CompanyConfig.brandName), findsOneWidget);
+    expect(find.text(CompanyConfig.companyName), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.byIcon(Icons.home_work_outlined)).dx,
+      lessThan(32.0),
+    );
+    expect(find.byType(NavigationBar), findsOneWidget);
+    expect(find.byType(NavigationDestination), findsNWidgets(4));
+
+    await tester.pumpWidget(
+      KeyedSubtree(
+        key: const ValueKey<String>('scaffold_catalog'),
+        child: _wrapWithRouter(const CatalogScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await expectNoDrawerOrHamburger();
+
+    await tester.pumpWidget(
+      KeyedSubtree(
+        key: const ValueKey<String>('scaffold_check_booking'),
+        child: _wrapWithRouter(const CheckBookingScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await expectNoDrawerOrHamburger();
+
+    await tester.pumpWidget(
+      KeyedSubtree(
+        key: const ValueKey<String>('scaffold_about'),
+        child: _wrapWithRouter(const AboutScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await expectNoDrawerOrHamburger();
+
+    await tester.pumpWidget(
+      KeyedSubtree(
+        key: const ValueKey<String>('scaffold_detail'),
+        child: _wrapWithRouter(
+          const PropertyDetailScreen(slug: 'griya-hijau-residence-45-84'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await expectNoDrawerOrHamburger();
+    expect(find.byIcon(Icons.arrow_back), findsOneWidget);
+  });
+
+  testWidgets('AppDropdown opens strictly below field at identical top position across selections without keyboard', (
+    WidgetTester tester,
+  ) async {
+    String? selected = 'Opsi 1';
+    final List<AppDropdownItem<String>> items = List<AppDropdownItem<String>>.generate(
+      8,
+      (int i) => AppDropdownItem<String>(
+        value: 'Opsi ${i + 1}',
+        label: 'Opsi ${i + 1}',
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.lightTheme,
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.topCenter,
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: StatefulBuilder(
+                builder: (BuildContext context, StateSetter setLocalState) {
+                  return AppDropdown<String>(
+                    key: const Key('test_dropdown'),
+                    items: items,
+                    value: selected,
+                    onChanged: (String? next) {
+                      setLocalState(() => selected = next);
+                    },
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final Finder fieldFinder = find.byKey(const Key('test_dropdown'));
+    final Finder menuFinder = find.byKey(const Key('app_dropdown_menu'));
+
+    expect(
+      find.descendant(of: fieldFinder, matching: find.byType(EditableText)),
+      findsNothing,
+    );
+
+    await tester.tap(fieldFinder);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(EditableText), findsNothing);
+    final Rect fieldRect = tester.getRect(fieldFinder);
+    final Rect menuRect1 = tester.getRect(menuFinder);
+    final Rect firstItemRect1 = tester.getRect(
+      find.descendant(of: menuFinder, matching: find.text('Opsi 1')),
+    );
+
+    expect(menuRect1.top, greaterThanOrEqualTo(fieldRect.bottom));
+    expect(menuRect1.width, moreOrLessEquals(fieldRect.width, epsilon: 0.5));
+    expect(menuRect1.left, moreOrLessEquals(fieldRect.left, epsilon: 0.5));
+    expect(firstItemRect1.top, greaterThanOrEqualTo(fieldRect.bottom));
+
+    // Choose 5th item, close, then reopen and verify identical menu & first-item position.
+    await tester.tap(
+      find.descendant(of: menuFinder, matching: find.text('Opsi 5')),
+    );
+    await tester.pumpAndSettle();
+    expect(menuFinder, findsNothing);
+    expect(
+      find.descendant(of: fieldFinder, matching: find.text('Opsi 5')),
+      findsOneWidget,
+    );
+
+    await tester.tap(fieldFinder);
+    await tester.pumpAndSettle();
+
+    final Rect menuRect2 = tester.getRect(menuFinder);
+    final Rect firstItemRect2 = tester.getRect(
+      find.descendant(of: menuFinder, matching: find.text('Opsi 1')),
+    );
+    expect(menuRect2.top, moreOrLessEquals(menuRect1.top, epsilon: 0.5));
+    expect(
+      firstItemRect2.top,
+      moreOrLessEquals(firstItemRect1.top, epsilon: 0.5),
+    );
+    expect(firstItemRect2.top, greaterThanOrEqualTo(fieldRect.bottom));
+  });
+
+  testWidgets('AppDropdown caps 8-item menu to 5 full items with Scrollbar and lets user scroll to & tap item 8', (
+    WidgetTester tester,
+  ) async {
+    String? selected = 'Opsi 1';
+    final List<AppDropdownItem<String>> items = List<AppDropdownItem<String>>.generate(
+      8,
+      (int i) => AppDropdownItem<String>(
+        value: 'Opsi ${i + 1}',
+        label: 'Opsi ${i + 1}',
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.lightTheme,
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.topCenter,
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: StatefulBuilder(
+                builder: (BuildContext context, StateSetter setLocalState) {
+                  return AppDropdown<String>(
+                    key: const Key('eight_item_dropdown'),
+                    items: items,
+                    value: selected,
+                    onChanged: (String? next) {
+                      setLocalState(() => selected = next);
+                    },
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final Finder fieldFinder = find.byKey(const Key('eight_item_dropdown'));
+    final Finder menuFinder = find.byKey(const Key('app_dropdown_menu'));
+
+    await tester.tap(fieldFinder);
+    await tester.pumpAndSettle();
+
+    final Rect menuRect = tester.getRect(menuFinder);
+    expect(
+      menuRect.height,
+      moreOrLessEquals(
+        (kDropdownMaxVisibleItems * kDropdownItemHeight) +
+            (kDropdownMenuVerticalPadding * 2),
+        epsilon: 0.5,
+      ),
+    );
+    expect(find.byType(Scrollbar), findsOneWidget);
+
+    for (int i = 1; i <= 5; i++) {
+      final Rect itemRect = tester.getRect(
+        find.descendant(of: menuFinder, matching: find.text('Opsi $i')),
+      );
+      expect(itemRect.top, greaterThanOrEqualTo(menuRect.top));
+      expect(itemRect.bottom, lessThanOrEqualTo(menuRect.bottom));
+    }
+    expect(find.text('Opsi 8'), findsNothing);
+
+    final Finder menuScrollable = find.descendant(
+      of: menuFinder,
+      matching: find.byType(Scrollable),
+    );
+    await tester.scrollUntilVisible(
+      find.descendant(of: menuFinder, matching: find.text('Opsi 8')),
+      kDropdownItemHeight,
+      scrollable: menuScrollable,
+    );
+    await tester.pumpAndSettle();
+
+    final Finder item8Finder =
+        find.descendant(of: menuFinder, matching: find.text('Opsi 8'));
+    expect(item8Finder, findsOneWidget);
+
+    await tester.tap(item8Finder);
+    await tester.pumpAndSettle();
+
+    expect(menuFinder, findsNothing);
+    expect(
+      find.descendant(of: fieldFinder, matching: find.text('Opsi 8')),
+      findsOneWidget,
+    );
+    expect(selected, 'Opsi 8');
+  });
+
+  testWidgets('AppDropdown sizes 3-item menu without Scrollbar, clamps cleanly near screen bottom, and supports Form validation', (
+    WidgetTester tester,
+  ) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    String? selected3 = 'Pilihan 1';
+    final List<AppDropdownItem<String>> threeItems =
+        const <AppDropdownItem<String>>[
+      AppDropdownItem<String>(value: 'Pilihan 1', label: 'Pilihan 1'),
+      AppDropdownItem<String>(value: 'Pilihan 2', label: 'Pilihan 2'),
+      AppDropdownItem<String>(value: 'Pilihan 3', label: 'Pilihan 3'),
+    ];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.lightTheme,
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.topCenter,
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: StatefulBuilder(
+                builder: (BuildContext context, StateSetter setLocalState) {
+                  return AppDropdown<String>(
+                    key: const Key('three_item_dropdown'),
+                    items: threeItems,
+                    value: selected3,
+                    onChanged: (String? next) {
+                      setLocalState(() => selected3 = next);
+                    },
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('three_item_dropdown')));
+    await tester.pumpAndSettle();
+
+    final Finder menuFinder = find.byKey(const Key('app_dropdown_menu'));
+    final Rect threeMenuRect = tester.getRect(menuFinder);
+    expect(
+      threeMenuRect.height,
+      moreOrLessEquals(
+        (3 * kDropdownItemHeight) + (kDropdownMenuVerticalPadding * 2),
+        epsilon: 0.5,
+      ),
+    );
+    expect(find.byType(Scrollbar), findsNothing);
+    expect(
+      find.descendant(of: menuFinder, matching: find.text('Pilihan 3')),
+      findsOneWidget,
+    );
+
+    // Near bottom edge of 360x640 phone screen: shorten menu below field and scroll cleanly.
+    await tester.binding.setSurfaceSize(const Size(360, 640));
+    String? bottomSelected = 'Opsi 1';
+    final List<AppDropdownItem<String>> eightItems =
+        List<AppDropdownItem<String>>.generate(
+      8,
+      (int i) => AppDropdownItem<String>(
+        value: 'Opsi ${i + 1}',
+        label: 'Opsi ${i + 1}',
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        key: const ValueKey<String>('bottom_edge_dropdown_app'),
+        theme: AppTheme.lightTheme,
+        home: Scaffold(
+          body: Stack(
+            children: <Widget>[
+              Positioned(
+                left: 16,
+                right: 16,
+                top: 470,
+                child: StatefulBuilder(
+                  builder: (BuildContext context, StateSetter setLocalState) {
+                    return AppDropdown<String>(
+                      key: const Key('bottom_edge_dropdown'),
+                      items: eightItems,
+                      value: bottomSelected,
+                      onChanged: (String? next) {
+                        setLocalState(() => bottomSelected = next);
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final Finder bottomField = find.byKey(const Key('bottom_edge_dropdown'));
+    await tester.tap(bottomField);
+    await tester.pumpAndSettle();
+
+    final Rect bottomFieldRect = tester.getRect(bottomField);
+    final Rect clampedMenuRect = tester.getRect(menuFinder);
+    expect(clampedMenuRect.top, greaterThanOrEqualTo(bottomFieldRect.bottom));
+    expect(clampedMenuRect.bottom, lessThanOrEqualTo(640.0));
+    expect(
+      clampedMenuRect.height,
+      lessThan(AppDropdown.idealMenuHeightForCount(8)),
+    );
+    expect(find.byType(Scrollbar), findsOneWidget);
+
+    await tester.scrollUntilVisible(
+      find.descendant(of: menuFinder, matching: find.text('Opsi 8')),
+      kDropdownItemHeight,
+      scrollable: find.descendant(
+        of: menuFinder,
+        matching: find.byType(Scrollable),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(of: menuFinder, matching: find.text('Opsi 8')),
+    );
+    await tester.pumpAndSettle();
+    expect(bottomSelected, 'Opsi 8');
+    expect(tester.takeException(), isNull);
+
+    // Form validation support.
+    final GlobalKey<FormState> formKey = GlobalKey<FormState>();
+    String? validatedValue;
+    await tester.pumpWidget(
+      MaterialApp(
+        key: const ValueKey<String>('form_dropdown_app'),
+        theme: AppTheme.lightTheme,
+        home: Scaffold(
+          body: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Form(
+              key: formKey,
+              child: StatefulBuilder(
+                builder: (BuildContext context, StateSetter setLocalState) {
+                  return AppDropdown<String?>(
+                    key: const Key('validated_dropdown'),
+                    label: 'Pilih Unit',
+                    hint: 'Pilih satu',
+                    items: threeItems
+                        .map(
+                          (AppDropdownItem<String> item) =>
+                              AppDropdownItem<String?>(
+                            value: item.value,
+                            label: item.label,
+                          ),
+                        )
+                        .toList(),
+                    value: validatedValue,
+                    validator: (String? v) =>
+                        v == null ? 'Pilihan wajib diisi.' : null,
+                    onChanged: (String? next) {
+                      setLocalState(() => validatedValue = next);
+                    },
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(formKey.currentState!.validate(), isFalse);
+    await tester.pumpAndSettle();
+    expect(find.text('Pilihan wajib diisi.'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('validated_dropdown')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(of: menuFinder, matching: find.text('Pilihan 2')),
+    );
+    await tester.pumpAndSettle();
+    expect(formKey.currentState!.validate(), isTrue);
+    await tester.pumpAndSettle();
+    expect(find.text('Pilihan wajib diisi.'), findsNothing);
+  });
+
+  testWidgets('HomeScreen Daerah & CatalogScreen Sort use AppDropdown below field and preserve filters', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      const ProviderScope(
+        key: ValueKey<String>('integration_dropdowns'),
+        child: CustomerApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final Finder homeDropdown = find.byKey(const Key('home_location_dropdown'));
+    final Finder menuFinder = find.byKey(const Key('app_dropdown_menu'));
+
+    await tester.drag(
+      find.byType(Scrollable).first,
+      const Offset(0, -220),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(homeDropdown);
+    await tester.pumpAndSettle();
+    await tester.tap(homeDropdown);
+    await tester.pumpAndSettle();
+
+    final Rect homeFieldRect = tester.getRect(homeDropdown);
+    final Rect homeMenu1 = tester.getRect(menuFinder);
+    expect(homeMenu1.top, greaterThanOrEqualTo(homeFieldRect.bottom));
+
+    await tester.tap(
+      find.descendant(
+        of: menuFinder,
+        matching: find.text('Kec. Bumi Asri, Bandung'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(
+        of: homeDropdown,
+        matching: find.text('Kec. Bumi Asri, Bandung'),
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(homeDropdown);
+    await tester.pumpAndSettle();
+    final Rect homeMenu2 = tester.getRect(menuFinder);
+    expect(homeMenu2.top, moreOrLessEquals(homeMenu1.top, epsilon: 0.5));
+
+    await tester.tap(
+      find.descendant(of: menuFinder, matching: find.text('Semua daerah')),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(of: homeDropdown, matching: find.text('Semua daerah')),
+      findsOneWidget,
+    );
+
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NavigationBar),
+        matching: find.text('Katalog'),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final Finder sortDropdown = find.byKey(const Key('catalog_sort_dropdown'));
+    expect(
+      find.descendant(of: sortDropdown, matching: find.text('Terbaru')),
+      findsOneWidget,
+    );
+
+    await tester.tap(sortDropdown);
+    await tester.pumpAndSettle();
+    final Rect sortFieldRect = tester.getRect(sortDropdown);
+    final Rect sortMenuRect = tester.getRect(menuFinder);
+    expect(sortMenuRect.top, greaterThanOrEqualTo(sortFieldRect.bottom));
+    expect(
+      sortMenuRect.height,
+      moreOrLessEquals(
+        (3 * kDropdownItemHeight) + (kDropdownMenuVerticalPadding * 2),
+        epsilon: 0.5,
+      ),
+    );
+    expect(find.byType(Scrollbar), findsNothing);
+
+    await tester.tap(
+      find.descendant(of: menuFinder, matching: find.text('Harga Termurah')),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(of: sortDropdown, matching: find.text('Harga Termurah')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
   });
 }

@@ -5,6 +5,7 @@ import 'package:shared/shared.dart';
 
 import '../core/external_launcher.dart';
 import '../data/customer_repository.dart';
+import '../widgets/app_dropdown.dart';
 import '../widgets/customer_scaffold.dart';
 
 /// Layar Beranda (`/`) sesuai Figma `Beranda - Mobile` & Tugas 2.1.
@@ -233,40 +234,29 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     ],
                   ),
                   const SizedBox(height: AppSpacing.md),
-                  const Text('Daerah', style: AppTypography.inputLabel),
-                  const SizedBox(height: AppSpacing.xs),
-                  InputDecorator(
-                    decoration: const InputDecoration(
-                      contentPadding: EdgeInsets.symmetric(
-                        horizontal: AppSpacing.md,
-                        vertical: 4,
+                  AppDropdown<int?>(
+                    key: const Key('home_location_dropdown'),
+                    label: 'Daerah',
+                    hint: 'Semua daerah',
+                    value: locations.any(
+                      (Location l) => l.id == _selectedLocationId,
+                    )
+                        ? _selectedLocationId
+                        : null,
+                    items: <AppDropdownItem<int?>>[
+                      const AppDropdownItem<int?>(
+                        value: null,
+                        label: 'Semua daerah',
                       ),
-                    ),
-                    child: DropdownButtonHideUnderline(
-                      child: DropdownButton<int?>(
-                        isExpanded: true,
-                        value: locations.any(
-                          (Location l) => l.id == _selectedLocationId,
-                        )
-                            ? _selectedLocationId
-                            : null,
-                        hint: const Text('Semua daerah'),
-                        items: <DropdownMenuItem<int?>>[
-                          const DropdownMenuItem<int?>(
-                            value: null,
-                            child: Text('Semua daerah'),
-                          ),
-                          for (final Location loc in locations)
-                            DropdownMenuItem<int?>(
-                              value: loc.id,
-                              child: Text(loc.displayName),
-                            ),
-                        ],
-                        onChanged: (int? value) {
-                          setState(() => _selectedLocationId = value);
-                        },
-                      ),
-                    ),
+                      for (final Location loc in locations)
+                        AppDropdownItem<int?>(
+                          value: loc.id,
+                          label: loc.displayName,
+                        ),
+                    ],
+                    onChanged: (int? value) {
+                      setState(() => _selectedLocationId = value);
+                    },
                   ),
                   const SizedBox(height: AppSpacing.lg),
                   ElevatedButton.icon(
