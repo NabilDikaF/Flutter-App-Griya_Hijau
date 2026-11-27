@@ -247,7 +247,7 @@ class _AppDropdownState<T> extends State<AppDropdown<T>>
       controller: _scrollController,
       primary: false,
       padding: EdgeInsets.zero,
-      cacheExtent: 0,
+      scrollCacheExtent: const ScrollCacheExtent.pixels(0),
       itemExtent: kDropdownItemHeight,
       physics: needsScroll
           ? const ClampingScrollPhysics()

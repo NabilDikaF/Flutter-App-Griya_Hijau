@@ -38,8 +38,8 @@ class FlutterSecureKeyValueStore implements SecureKeyValueStore {
 class SecureSupabaseLocalStorage extends LocalStorage {
   const SecureSupabaseLocalStorage({
     required this.persistSessionKey,
-    SecureKeyValueStore store = const FlutterSecureKeyValueStore(),
-  }) : _store = store;
+    this._store = const FlutterSecureKeyValueStore(),
+  });
 
   final String persistSessionKey;
   final SecureKeyValueStore _store;
@@ -95,8 +95,8 @@ class SecureSupabaseLocalStorage extends LocalStorage {
 /// Penyimpanan PKCE verifier terenkripsi untuk `FlutterAuthClientOptions.pkceAsyncStorage`.
 class SecureGotrueAsyncStorage extends GotrueAsyncStorage {
   const SecureGotrueAsyncStorage({
-    SecureKeyValueStore store = const FlutterSecureKeyValueStore(),
-  }) : _store = store;
+    this._store = const FlutterSecureKeyValueStore(),
+  });
 
   final SecureKeyValueStore _store;
 
