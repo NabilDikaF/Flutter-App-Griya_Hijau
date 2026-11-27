@@ -5,7 +5,6 @@ import 'package:shared/shared.dart';
 
 import '../core/external_launcher.dart';
 import '../data/customer_repository.dart';
-import '../widgets/app_dropdown.dart';
 import '../widgets/customer_scaffold.dart';
 
 /// Layar Beranda (`/`) sesuai Figma `Beranda - Mobile` & Tugas 2.1.

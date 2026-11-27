@@ -8,7 +8,6 @@ import 'package:app_customer/screens/booking_success_screen.dart';
 import 'package:app_customer/screens/catalog_screen.dart';
 import 'package:app_customer/screens/check_booking_screen.dart';
 import 'package:app_customer/screens/property_detail_screen.dart';
-import 'package:app_customer/widgets/app_dropdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';

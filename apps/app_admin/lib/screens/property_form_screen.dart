@@ -467,42 +467,36 @@ class _AdminPropertyFormScreenState
                   SlugHelper.validate(v, fieldLabel: 'Slug properti'),
             ),
             const SizedBox(height: AppSpacing.md),
-            InputDecorator(
-              decoration: const InputDecoration(labelText: 'Kategori *'),
-              child: DropdownButtonHideUnderline(
-                child: DropdownButton<int>(
-                  value: _selectedCategoryId,
-                  isExpanded: true,
-                  items: _categories
-                      .map(
-                        (PropertyCategory c) => DropdownMenuItem<int>(
-                          value: c.id,
-                          child: Text(c.isActive ? c.name : '${c.name} (Nonaktif)'),
-                        ),
-                      )
-                      .toList(growable: false),
-                  onChanged: (int? v) => setState(() => _selectedCategoryId = v),
-                ),
-              ),
+            AppDropdown<int>(
+              key: const Key('admin_property_category_dropdown'),
+              label: 'Kategori *',
+              hint: 'Pilih kategori',
+              value: _selectedCategoryId,
+              items: _categories
+                  .map(
+                    (PropertyCategory c) => AppDropdownItem<int>(
+                      value: c.id,
+                      label: c.isActive ? c.name : '${c.name} (Nonaktif)',
+                    ),
+                  )
+                  .toList(growable: false),
+              onChanged: (int? v) => setState(() => _selectedCategoryId = v),
             ),
             const SizedBox(height: AppSpacing.md),
-            InputDecorator(
-              decoration: const InputDecoration(labelText: 'Daerah / Kecamatan *'),
-              child: DropdownButtonHideUnderline(
-                child: DropdownButton<int>(
-                  value: _selectedLocationId,
-                  isExpanded: true,
-                  items: _locations
-                      .map(
-                        (Location l) => DropdownMenuItem<int>(
-                          value: l.id,
-                          child: Text(l.displayName),
-                        ),
-                      )
-                      .toList(growable: false),
-                  onChanged: (int? v) => setState(() => _selectedLocationId = v),
-                ),
-              ),
+            AppDropdown<int>(
+              key: const Key('admin_property_location_dropdown'),
+              label: 'Daerah / Kecamatan *',
+              hint: 'Pilih daerah / kecamatan',
+              value: _selectedLocationId,
+              items: _locations
+                  .map(
+                    (Location l) => AppDropdownItem<int>(
+                      value: l.id,
+                      label: l.displayName,
+                    ),
+                  )
+                  .toList(growable: false),
+              onChanged: (int? v) => setState(() => _selectedLocationId = v),
             ),
             const SizedBox(height: AppSpacing.md),
             TextFormField(

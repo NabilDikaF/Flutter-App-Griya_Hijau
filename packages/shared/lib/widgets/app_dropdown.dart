@@ -1,7 +1,10 @@
 import 'dart:math' as math;
 
 import 'package:material_ui/material_ui.dart';
-import 'package:shared/shared.dart';
+
+import '../theme/app_colors.dart';
+import '../theme/app_spacing.dart';
+import '../theme/app_typography.dart';
 
 /// Tinggi tetap per baris item pada menu [AppDropdown].
 const double kDropdownItemHeight = 48.0;

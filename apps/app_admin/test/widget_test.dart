@@ -867,7 +867,7 @@ void main() {
       expect(notesField.maxLength, 2000);
     });
 
-    testWidgets('Dashboard DropdownButton safely resets when selected trend property leaves top-10', (
+    testWidgets('Dashboard AppDropdown safely resets when selected trend property leaves top-10', (
       WidgetTester tester,
     ) async {
       final _ShiftingTopPropertiesAdminRepository repo =
@@ -891,21 +891,30 @@ void main() {
 
       final Finder trendDropdownFinder =
           find.byKey(const Key('admin_dashboard_trend_dropdown'));
+      final Finder menuFinder = find.byKey(const Key('app_dropdown_menu'));
 
       await tester.scrollUntilVisible(
         trendDropdownFinder,
         300,
         scrollable: dashboardScroll,
       );
-      await tester.ensureVisible(trendDropdownFinder);
+      await Scrollable.ensureVisible(
+        tester.element(trendDropdownFinder),
+        alignment: 0.2,
+      );
       await tester.pumpAndSettle();
       await tester.tap(trendDropdownFinder);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Unit Top 101').last);
+      await tester.tap(
+        find.descendant(
+          of: menuFinder,
+          matching: find.text('Unit Top 101'),
+        ),
+      );
       await tester.pumpAndSettle();
 
       expect(
-        tester.widget<DropdownButton<int?>>(trendDropdownFinder).value,
+        tester.widget<AppDropdown<int?>>(trendDropdownFinder).value,
         101,
       );
 
@@ -917,11 +926,19 @@ void main() {
         -300,
         scrollable: dashboardScroll,
       );
-      await tester.ensureVisible(periodDropdownFinder);
+      await Scrollable.ensureVisible(
+        tester.element(periodDropdownFinder),
+        alignment: 0.2,
+      );
       await tester.pumpAndSettle();
       await tester.tap(periodDropdownFinder);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('30 hari terakhir').last);
+      await tester.tap(
+        find.descendant(
+          of: menuFinder,
+          matching: find.text('30 hari terakhir'),
+        ),
+      );
       await tester.pumpAndSettle();
 
       expect(tester.takeException(), isNull);
@@ -935,14 +952,99 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(tester.takeException(), isNull);
-      final DropdownButton<int?> resetDropdown =
-          tester.widget<DropdownButton<int?>>(trendDropdownFinder);
+      final AppDropdown<int?> resetDropdown =
+          tester.widget<AppDropdown<int?>>(trendDropdownFinder);
       expect(resetDropdown.value, isNull);
       expect(
-        resetDropdown.items!
-            .map((DropdownMenuItem<int?> item) => item.value),
+        resetDropdown.items
+            .map((AppDropdownItem<int?> item) => item.value),
         <int?>[null, 202],
       );
+    });
+
+    testWidgets('Property form uses AppDropdown below field with consistent menu position', (
+      WidgetTester tester,
+    ) async {
+      await _signInAsAdmin(tester);
+
+      await tester.tap(find.text('Properti'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('admin_add_property_fab')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.descendant(
+          of: find.byType(AdminPropertyFormScreen),
+          matching: find.byWidgetPredicate(
+            (Widget widget) => widget is DropdownButton,
+          ),
+        ),
+        findsNothing,
+      );
+
+      final Finder categoryDropdownFinder =
+          find.byKey(const Key('admin_property_category_dropdown'));
+      final Finder locationDropdownFinder =
+          find.byKey(const Key('admin_property_location_dropdown'));
+
+      expect(
+        tester.widget<AppDropdown<int>>(categoryDropdownFinder),
+        isA<AppDropdown<int>>(),
+      );
+      expect(
+        tester.widget<AppDropdown<int>>(locationDropdownFinder),
+        isA<AppDropdown<int>>(),
+      );
+
+      final Finder formScroll = find
+          .descendant(
+            of: find.byType(AdminPropertyFormScreen),
+            matching: find.byType(Scrollable),
+          )
+          .first;
+
+      await tester.scrollUntilVisible(
+        locationDropdownFinder,
+        300,
+        scrollable: formScroll,
+      );
+      await Scrollable.ensureVisible(
+        tester.element(locationDropdownFinder),
+        alignment: 0.2,
+      );
+      await tester.pumpAndSettle();
+
+      final Finder menuFinder = find.byKey(const Key('app_dropdown_menu'));
+
+      await tester.tap(locationDropdownFinder);
+      await tester.pumpAndSettle();
+
+      final Rect fieldRect = tester.getRect(locationDropdownFinder);
+      final Rect menuRect1 = tester.getRect(menuFinder);
+      expect(menuRect1.top, greaterThanOrEqualTo(fieldRect.bottom));
+
+      await tester.tap(
+        find.descendant(
+          of: menuFinder,
+          matching: find.text('Kec. Bumi Asri, Bandung'),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.descendant(
+          of: locationDropdownFinder,
+          matching: find.text('Kec. Bumi Asri, Bandung'),
+        ),
+        findsOneWidget,
+      );
+
+      await tester.tap(locationDropdownFinder);
+      await tester.pumpAndSettle();
+
+      final Rect menuRect2 = tester.getRect(menuFinder);
+      expect(menuRect2.top, moreOrLessEquals(menuRect1.top, epsilon: 0.5));
     });
   });
 

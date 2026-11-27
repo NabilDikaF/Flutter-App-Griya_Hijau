@@ -15,6 +15,7 @@ export 'theme/app_theme.dart';
 export 'theme/app_typography.dart';
 export 'utils/formatters.dart';
 export 'utils/kpr_calculator.dart';
+export 'widgets/app_dropdown.dart';
 export 'widgets/async_state_view.dart';
 export 'widgets/kpr_calculator_card.dart';
 export 'widgets/property_badges.dart';

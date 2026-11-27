@@ -6,7 +6,6 @@ import 'package:material_ui/material_ui.dart';
 import 'package:shared/shared.dart';
 
 import '../data/customer_repository.dart';
-import '../widgets/app_dropdown.dart';
 import '../widgets/customer_scaffold.dart';
 import '../widgets/filter_bottom_sheet.dart';
 

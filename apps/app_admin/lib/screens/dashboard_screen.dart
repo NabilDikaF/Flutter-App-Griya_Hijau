@@ -152,31 +152,28 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
             const Text('Periode:', style: AppTypography.sectionLabel),
             const SizedBox(width: AppSpacing.md),
             Expanded(
-              child: DropdownButtonHideUnderline(
-                child: DropdownButton<int>(
-                  key: const Key('admin_dashboard_period_dropdown'),
-                  value: _daysWindow,
-                  isExpanded: true,
-                  items: const <DropdownMenuItem<int>>[
-                    DropdownMenuItem<int>(
-                      value: 7,
-                      child: Text('7 hari terakhir'),
-                    ),
-                    DropdownMenuItem<int>(
-                      value: 30,
-                      child: Text('30 hari terakhir'),
-                    ),
-                    DropdownMenuItem<int>(
-                      value: 90,
-                      child: Text('90 hari terakhir (per bulan)'),
-                    ),
-                  ],
-                  onChanged: (int? value) {
-                    if (value == null || value == _daysWindow) return;
-                    setState(() => _daysWindow = value);
-                    _load();
-                  },
-                ),
+              child: AppDropdown<int>(
+                key: const Key('admin_dashboard_period_dropdown'),
+                value: _daysWindow,
+                items: const <AppDropdownItem<int>>[
+                  AppDropdownItem<int>(
+                    value: 7,
+                    label: '7 hari terakhir',
+                  ),
+                  AppDropdownItem<int>(
+                    value: 30,
+                    label: '30 hari terakhir',
+                  ),
+                  AppDropdownItem<int>(
+                    value: 90,
+                    label: '90 hari terakhir (per bulan)',
+                  ),
+                ],
+                onChanged: (int? value) {
+                  if (value == null || value == _daysWindow) return;
+                  setState(() => _daysWindow = value);
+                  _load();
+                },
               ),
             ),
           ],
@@ -338,45 +335,31 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
               style: AppTypography.captionRegular,
             ),
             const SizedBox(height: AppSpacing.md),
-            InputDecorator(
-              decoration: const InputDecoration(
-                labelText: 'Filter Properti',
-                contentPadding: EdgeInsets.symmetric(
-                  horizontal: AppSpacing.md,
-                  vertical: AppSpacing.xs,
+            AppDropdown<int?>(
+              key: const Key('admin_dashboard_trend_dropdown'),
+              label: 'Filter Properti',
+              value: bundle.topProperties.any(
+                (AdminPropertyTopItem item) =>
+                    item.id == _selectedTrendPropertyId,
+              )
+                  ? _selectedTrendPropertyId
+                  : null,
+              items: <AppDropdownItem<int?>>[
+                const AppDropdownItem<int?>(
+                  value: null,
+                  label: 'Semua Properti',
                 ),
-              ),
-              child: DropdownButtonHideUnderline(
-                child: DropdownButton<int?>(
-                  key: const Key('admin_dashboard_trend_dropdown'),
-                  value: bundle.topProperties.any(
-                    (AdminPropertyTopItem item) =>
-                        item.id == _selectedTrendPropertyId,
-                  )
-                      ? _selectedTrendPropertyId
-                      : null,
-                  isExpanded: true,
-                  items: <DropdownMenuItem<int?>>[
-                    const DropdownMenuItem<int?>(
-                      value: null,
-                      child: Text('Semua Properti'),
-                    ),
-                    ...bundle.topProperties.map(
-                      (AdminPropertyTopItem item) => DropdownMenuItem<int?>(
-                        value: item.id,
-                        child: Text(
-                          item.title,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ),
-                  ],
-                  onChanged: (int? value) {
-                    setState(() => _selectedTrendPropertyId = value);
-                    _load();
-                  },
+                ...bundle.topProperties.map(
+                  (AdminPropertyTopItem item) => AppDropdownItem<int?>(
+                    value: item.id,
+                    label: item.title,
+                  ),
                 ),
-              ),
+              ],
+              onChanged: (int? value) {
+                setState(() => _selectedTrendPropertyId = value);
+                _load();
+              },
             ),
             const SizedBox(height: AppSpacing.lg),
             if (points.isEmpty)
