@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
@@ -10,7 +13,10 @@ import 'core/secure_session_storage.dart';
 import 'data/admin_repository.dart';
 import 'routing/app_router.dart';
 
-Future<bool> initializeAdminSupabase({bool isRelease = kReleaseMode}) async {
+Future<bool> initializeAdminSupabase({
+  bool isRelease = kReleaseMode,
+  SecureKeyValueStore? activityStore,
+}) async {
   final String? releaseError =
       isRelease ? EnvConfig.releaseConfigError() : null;
   if (releaseError != null || !EnvConfig.hasSupabaseConfig) {
@@ -42,7 +48,21 @@ Future<bool> initializeAdminSupabase({bool isRelease = kReleaseMode}) async {
   }
 
   try {
-    await AdminRepository(Supabase.instance.client).ensureValidAdminSession();
+    final AdminRepository repo = AdminRepository(Supabase.instance.client);
+    final bool hasSession =
+        Supabase.instance.client.auth.currentSession != null;
+    if (hasSession) {
+      final bool expired =
+          await AdminSessionNotifier.enforcePersistedIdleTimeout(
+        repository: repo,
+        store: activityStore ?? const FlutterSecureKeyValueStore(),
+      );
+      if (expired) {
+        AdminSessionNotifier.markColdStartSessionExpired();
+      } else {
+        await repo.ensureValidAdminSession();
+      }
+    }
   } catch (_) {
     // Tetap fail-closed bila verifikasi awal sesi gagal; pengguna harus login ulang.
   }
@@ -69,8 +89,47 @@ class AdminApp extends ConsumerStatefulWidget {
   ConsumerState<AdminApp> createState() => _AdminAppState();
 }
 
-class _AdminAppState extends ConsumerState<AdminApp> {
+class _AdminAppState extends ConsumerState<AdminApp>
+    with WidgetsBindingObserver {
   bool _isRetrying = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    HardwareKeyboard.instance.addHandler(_handleKeyEvent);
+  }
+
+  @override
+  void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleKeyEvent);
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  bool _handleKeyEvent(KeyEvent event) {
+    if (event is KeyDownEvent && mounted) {
+      if (widget.requireSupabase && !EnvConfig.isSupabaseInitialized) {
+        return false;
+      }
+      ref.read(adminSessionProvider).recordUserActivity();
+    }
+    return false;
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (widget.requireSupabase && !EnvConfig.isSupabaseInitialized) {
+      return;
+    }
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      unawaited(ref.read(adminSessionProvider).flushActivityTimestamp());
+    } else if (state == AppLifecycleState.resumed) {
+      unawaited(ref.read(adminSessionProvider).checkIdleTimeout());
+    }
+  }
 
   Future<void> _retryInit() async {
     if (_isRetrying) return;
@@ -147,11 +206,18 @@ class _AdminAppState extends ConsumerState<AdminApp> {
     }
 
     final GoRouter router = ref.watch(adminRouterProvider);
-    return MaterialApp.router(
-      title: '${CompanyConfig.displayBrand} — Admin',
-      theme: AppTheme.lightTheme,
-      routerConfig: router,
-      debugShowCheckedModeBanner: false,
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (_) => ref.read(adminSessionProvider).recordUserActivity(),
+      onPointerMove: (_) => ref.read(adminSessionProvider).recordUserActivity(),
+      onPointerSignal: (_) =>
+          ref.read(adminSessionProvider).recordUserActivity(),
+      child: MaterialApp.router(
+        title: '${CompanyConfig.displayBrand} — Admin',
+        theme: AppTheme.lightTheme,
+        routerConfig: router,
+        debugShowCheckedModeBanner: false,
+      ),
     );
   }
 }

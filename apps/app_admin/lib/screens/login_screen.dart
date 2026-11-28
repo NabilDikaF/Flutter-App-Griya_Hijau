@@ -65,6 +65,8 @@ class _AdminLoginScreenState extends ConsumerState<AdminLoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final AdminSessionNotifier session = ref.read(adminSessionProvider);
+
     return Scaffold(
       backgroundColor: AppColors.slate50,
       body: SafeArea(
@@ -132,6 +134,59 @@ class _AdminLoginScreenState extends ConsumerState<AdminLoginScreen> {
                               style: AppTypography.bodyNormal,
                             ),
                             const SizedBox(height: AppSpacing.xl),
+                            ListenableBuilder(
+                              listenable: session,
+                              builder: (BuildContext context, _) {
+                                final String? expiredMessage =
+                                    session.sessionExpiredMessage;
+                                if (_errorMessage != null ||
+                                    expiredMessage == null) {
+                                  return const SizedBox.shrink();
+                                }
+                                return Padding(
+                                  padding: const EdgeInsets.only(
+                                    bottom: AppSpacing.lg,
+                                  ),
+                                  child: Container(
+                                    key: const Key(
+                                      'admin_login_session_expired_banner',
+                                    ),
+                                    padding: const EdgeInsets.all(AppSpacing.md),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.warningBg,
+                                      borderRadius: BorderRadius.circular(
+                                        AppSpacing.radiusMd,
+                                      ),
+                                      border: Border.all(
+                                        color: AppColors.warningText
+                                            .withValues(alpha: 0.35),
+                                      ),
+                                    ),
+                                    child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: <Widget>[
+                                        const Icon(
+                                          Icons.timer_off_outlined,
+                                          color: AppColors.warningText,
+                                          size: 18,
+                                        ),
+                                        const SizedBox(width: AppSpacing.sm),
+                                        Expanded(
+                                          child: Text(
+                                            expiredMessage,
+                                            style:
+                                                AppTypography.caption.copyWith(
+                                              color: AppColors.warningText,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
                             if (_errorMessage != null) ...<Widget>[
                               Container(
                                 padding: const EdgeInsets.all(AppSpacing.md),

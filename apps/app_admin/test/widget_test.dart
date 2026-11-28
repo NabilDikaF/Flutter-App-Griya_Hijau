@@ -1149,6 +1149,226 @@ void main() {
       expect(await pkceStorage.getItem(key: 'pkce-verifier'), isNull);
     });
   });
+
+  group('Idle session timeout (30 minutes)', () {
+    testWidgets(
+      'auto-logs out after 30 minutes idle, resets on interaction, and shows expired banner on login',
+      (WidgetTester tester) async {
+        DateTime fakeNow = DateTime.utc(2026, 11, 28, 10, 0);
+        final _SessionTestAdminRepository repo = _SessionTestAdminRepository(
+          initialUser: const AdminSessionUser(
+            id: 'admin-idle-1',
+            email: 'admin@rindangalam.id',
+            role: 'admin',
+          ),
+        );
+        addTearDown(repo.closeController);
+
+        final _MemorySecureKeyValueStore store = _MemorySecureKeyValueStore();
+        final AdminSessionNotifier notifier = AdminSessionNotifier(
+          repo,
+          idleTimeout: const Duration(minutes: 30),
+          activityStore: store,
+          clock: () => fakeNow,
+        );
+
+        await tester.pumpWidget(
+          ProviderScope(
+            key: const ValueKey<String>('idle_timeout_reset_scope'),
+            overrides: [
+              adminRepositoryProvider.overrideWithValue(repo),
+              adminSessionProvider.overrideWith((Ref ref) {
+                ref.onDispose(notifier.dispose);
+                return notifier;
+              }),
+            ],
+            child: const AdminApp(requireSupabase: false),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.byType(AdminDashboardScreen), findsOneWidget);
+
+        // 29 minutes pass without interaction -> still logged in.
+        fakeNow = fakeNow.add(const Duration(minutes: 29));
+        await tester.pump(const Duration(minutes: 29));
+        expect(find.byType(AdminDashboardScreen), findsOneWidget);
+
+        // User interacts at minute 29 -> idle timer resets to a fresh 30m window.
+        await tester.tap(find.byType(AdminDashboardScreen));
+        await tester.pump();
+
+        // Advance another 20 minutes (49m total since start, 20m since tap) -> still logged in.
+        fakeNow = fakeNow.add(const Duration(minutes: 20));
+        await tester.pump(const Duration(minutes: 20));
+        expect(find.byType(AdminDashboardScreen), findsOneWidget);
+
+        // Advance 11 more minutes with no interaction (31m idle) -> auto-logged out.
+        fakeNow = fakeNow.add(const Duration(minutes: 11));
+        await tester.pump(const Duration(minutes: 11));
+        await tester.pumpAndSettle();
+
+        expect(find.byType(AdminLoginScreen), findsOneWidget);
+        expect(
+          find.byKey(const Key('admin_login_session_expired_banner')),
+          findsOneWidget,
+        );
+        expect(repo.signOutCallCount, greaterThanOrEqualTo(1));
+        expect(repo.clearCacheCallCount, greaterThanOrEqualTo(1));
+        expect(
+          store.values.containsKey(AdminSessionNotifier.lastActivityStorageKey),
+          isFalse,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'enforces 30-minute idle timeout when returning from background (AppLifecycleState.resumed)',
+      (WidgetTester tester) async {
+        DateTime fakeNow = DateTime.utc(2026, 11, 28, 12, 0);
+        final _SessionTestAdminRepository repo = _SessionTestAdminRepository(
+          initialUser: const AdminSessionUser(
+            id: 'admin-idle-2',
+            email: 'admin@rindangalam.id',
+            role: 'admin',
+          ),
+        );
+        addTearDown(repo.closeController);
+
+        final _MemorySecureKeyValueStore store = _MemorySecureKeyValueStore();
+        final AdminSessionNotifier notifier = AdminSessionNotifier(
+          repo,
+          idleTimeout: const Duration(minutes: 30),
+          activityStore: store,
+          clock: () => fakeNow,
+        );
+
+        await tester.pumpWidget(
+          ProviderScope(
+            key: const ValueKey<String>('idle_timeout_resume_scope'),
+            overrides: [
+              adminRepositoryProvider.overrideWithValue(repo),
+              adminSessionProvider.overrideWith((Ref ref) {
+                ref.onDispose(notifier.dispose);
+                return notifier;
+              }),
+            ],
+            child: const AdminApp(requireSupabase: false),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.byType(AdminDashboardScreen), findsOneWidget);
+
+        // App goes to background at T0 + 5m.
+        fakeNow = fakeNow.add(const Duration(minutes: 5));
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        await tester.pump();
+
+        // Device sleeps / app stays backgrounded 31m -> resumed at T0 + 36m.
+        fakeNow = fakeNow.add(const Duration(minutes: 31));
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        await tester.pumpAndSettle();
+
+        expect(find.byType(AdminLoginScreen), findsOneWidget);
+        expect(
+          find.byKey(const Key('admin_login_session_expired_banner')),
+          findsOneWidget,
+        );
+        expect(repo.signOutCallCount, greaterThanOrEqualTo(1));
+      },
+    );
+
+    test(
+      'enforcePersistedIdleTimeout handles fresh, expired, backward clock skew, and manual signOut',
+      () async {
+        DateTime fakeNow = DateTime.utc(2026, 11, 28, 14, 0);
+        final _MemorySecureKeyValueStore store = _MemorySecureKeyValueStore();
+        final _SessionTestAdminRepository repo = _SessionTestAdminRepository(
+          initialUser: const AdminSessionUser(
+            id: 'admin-idle-3',
+            email: 'admin@rindangalam.id',
+            role: 'admin',
+          ),
+        );
+        addTearDown(repo.closeController);
+
+        // Fresh timestamp (10m old) -> allowed.
+        store.values[AdminSessionNotifier.lastActivityStorageKey] = fakeNow
+            .subtract(const Duration(minutes: 10))
+            .millisecondsSinceEpoch
+            .toString();
+        expect(
+          await AdminSessionNotifier.enforcePersistedIdleTimeout(
+            repository: repo,
+            store: store,
+            clock: () => fakeNow,
+          ),
+          isFalse,
+        );
+        expect(repo.signOutCallCount, 0);
+
+        // Stale timestamp (30m old) -> rejected & signed out.
+        store.values[AdminSessionNotifier.lastActivityStorageKey] = fakeNow
+            .subtract(const Duration(minutes: 30))
+            .millisecondsSinceEpoch
+            .toString();
+        expect(
+          await AdminSessionNotifier.enforcePersistedIdleTimeout(
+            repository: repo,
+            store: store,
+            clock: () => fakeNow,
+          ),
+          isTrue,
+        );
+        expect(repo.signOutCallCount, 1);
+        expect(
+          store.values.containsKey(AdminSessionNotifier.lastActivityStorageKey),
+          isFalse,
+        );
+
+        // Backward device clock skew (>5m in future) -> fail-closed.
+        store.values[AdminSessionNotifier.lastActivityStorageKey] = fakeNow
+            .add(const Duration(minutes: 10))
+            .millisecondsSinceEpoch
+            .toString();
+        expect(
+          await AdminSessionNotifier.enforcePersistedIdleTimeout(
+            repository: repo,
+            store: store,
+            clock: () => fakeNow,
+          ),
+          isTrue,
+        );
+        expect(repo.signOutCallCount, 2);
+
+        // Manual signOut clears persisted activity timestamp & expired message.
+        final AdminSessionNotifier notifier = AdminSessionNotifier(
+          repo,
+          activityStore: store,
+          clock: () => fakeNow,
+          initialExpiredMessage: AdminSessionNotifier.idleExpiredMessage,
+        );
+        await notifier.signIn(
+          email: 'admin@rindangalam.id',
+          password: 'password123',
+        );
+        expect(
+          store.values.containsKey(AdminSessionNotifier.lastActivityStorageKey),
+          isTrue,
+        );
+        expect(notifier.sessionExpiredMessage, isNull);
+
+        await notifier.signOut();
+        expect(
+          store.values.containsKey(AdminSessionNotifier.lastActivityStorageKey),
+          isFalse,
+        );
+        expect(notifier.sessionExpiredMessage, isNull);
+        notifier.dispose();
+      },
+    );
+  });
 }
 
 class _MemorySecureKeyValueStore implements SecureKeyValueStore {

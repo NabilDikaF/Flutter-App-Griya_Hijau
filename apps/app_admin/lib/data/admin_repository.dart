@@ -8,40 +8,315 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/env_config.dart';
 import '../core/image_compressor.dart';
+import '../core/secure_session_storage.dart';
 import '../core/slug_helper.dart';
 import 'admin_models.dart';
 
-/// State sesi Admin untuk menjaga navigasi GoRouter (`Tugas 3.1`).
+/// State sesi Admin untuk menjaga navigasi GoRouter (`Tugas 3.1`) sekaligus
+/// menegakkan batas idle sesi 30 menit.
 class AdminSessionNotifier extends ChangeNotifier {
-  AdminSessionNotifier(this._repository) {
+  AdminSessionNotifier(
+    this._repository, {
+    this._idleTimeout = defaultIdleTimeout,
+    this._activityStore,
+    DateTime Function()? clock,
+    String? initialExpiredMessage,
+  })  : _clock = clock ?? DateTime.now,
+        _sessionExpiredMessage = initialExpiredMessage {
     _currentUser = _repository.currentAdminUserSync();
     _authSubscription =
         _repository.authSessionChanges.listen(_onAuthSessionChanged);
+    if (isLoggedIn) {
+      _lastActivityAt = _clock().toUtc();
+      _scheduleIdleTimer(_idleTimeout);
+      if (_activityStore != null) {
+        unawaited(_reconcileWithPersistedActivity());
+      }
+    }
+  }
+
+  static const Duration defaultIdleTimeout = Duration(minutes: 30);
+  static const Duration _activityPersistThrottle = Duration(seconds: 30);
+  static const Duration _maxFutureClockSkew = Duration(minutes: 5);
+  static const String lastActivityStorageKey = 'admin_last_activity_utc_ms';
+  static const String idleExpiredMessage =
+      'Sesi Anda berakhir karena tidak ada aktivitas selama 30 menit. Silakan masuk kembali.';
+
+  static String? _pendingColdStartExpiredMessage;
+
+  static void markColdStartSessionExpired() {
+    _pendingColdStartExpiredMessage = idleExpiredMessage;
+  }
+
+  static String? consumeColdStartExpiredMessage() {
+    final String? msg = _pendingColdStartExpiredMessage;
+    _pendingColdStartExpiredMessage = null;
+    return msg;
+  }
+
+  static bool isActivityExpired({
+    required DateTime lastActivityUtc,
+    required DateTime nowUtc,
+    Duration idleTimeout = defaultIdleTimeout,
+  }) {
+    if (lastActivityUtc.isAfter(nowUtc.add(_maxFutureClockSkew))) {
+      return true;
+    }
+    return nowUtc.difference(lastActivityUtc) >= idleTimeout;
+  }
+
+  /// Mengecek timestamp aktivitas terakhir di Keystore saat cold start.
+  /// Mengembalikan `true` dan melakukan sign-out bila sesi sudah idle >= batas.
+  static Future<bool> enforcePersistedIdleTimeout({
+    required AdminRepository repository,
+    required SecureKeyValueStore store,
+    Duration idleTimeout = defaultIdleTimeout,
+    DateTime Function()? clock,
+  }) async {
+    final DateTime now = (clock ?? DateTime.now)().toUtc();
+    String? raw;
+    try {
+      raw = await store.read(lastActivityStorageKey);
+    } catch (_) {
+      try {
+        await store.delete(lastActivityStorageKey);
+      } catch (_) {}
+      await repository.signOut();
+      return true;
+    }
+
+    if (raw == null) {
+      try {
+        await store.write(
+          lastActivityStorageKey,
+          now.millisecondsSinceEpoch.toString(),
+        );
+      } catch (_) {}
+      return false;
+    }
+
+    final int? millis = int.tryParse(raw.trim());
+    if (millis == null ||
+        isActivityExpired(
+          lastActivityUtc:
+              DateTime.fromMillisecondsSinceEpoch(millis, isUtc: true),
+          nowUtc: now,
+          idleTimeout: idleTimeout,
+        )) {
+      try {
+        await store.delete(lastActivityStorageKey);
+      } catch (_) {}
+      await repository.signOut();
+      return true;
+    }
+    return false;
   }
 
   final AdminRepository _repository;
+  final Duration _idleTimeout;
+  final SecureKeyValueStore? _activityStore;
+  final DateTime Function() _clock;
   AdminSessionUser? _currentUser;
   StreamSubscription<AdminSessionUser?>? _authSubscription;
+  Timer? _idleTimer;
+  DateTime? _lastActivityAt;
+  DateTime? _lastPersistedAt;
+  String? _sessionExpiredMessage;
+  bool _isExpiring = false;
   bool _isDisposed = false;
 
   AdminSessionUser? get currentUser =>
       (_currentUser != null && _currentUser!.isAdmin) ? _currentUser : null;
   bool get isLoggedIn => currentUser?.isAdmin ?? false;
+  String? get sessionExpiredMessage => _sessionExpiredMessage;
+
+  void _cancelIdleTimer() {
+    _idleTimer?.cancel();
+    _idleTimer = null;
+  }
+
+  void _scheduleIdleTimer(Duration delay) {
+    _cancelIdleTimer();
+    if (_isDisposed || !isLoggedIn) return;
+    if (delay <= Duration.zero) {
+      unawaited(expireForInactivity());
+      return;
+    }
+    _idleTimer = Timer(delay, () => unawaited(expireForInactivity()));
+  }
+
+  Future<void> _persistLastActivity(DateTime atUtc) async {
+    final SecureKeyValueStore? store = _activityStore;
+    if (store == null) return;
+    try {
+      await store.write(
+        lastActivityStorageKey,
+        atUtc.millisecondsSinceEpoch.toString(),
+      );
+    } catch (_) {
+      // Abaikan kegagalan I/O Keystore agar interaksi UI tetap berjalan.
+    }
+  }
+
+  Future<void> _clearPersistedActivity() async {
+    final SecureKeyValueStore? store = _activityStore;
+    if (store == null) return;
+    try {
+      await store.delete(lastActivityStorageKey);
+    } catch (_) {}
+  }
+
+  Future<DateTime?> _readPersistedActivity() async {
+    final SecureKeyValueStore? store = _activityStore;
+    if (store == null) return null;
+    try {
+      final String? raw = await store.read(lastActivityStorageKey);
+      if (raw == null) return null;
+      final int? millis = int.tryParse(raw.trim());
+      if (millis == null) return null;
+      return DateTime.fromMillisecondsSinceEpoch(millis, isUtc: true);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _reconcileWithPersistedActivity() async {
+    if (_isDisposed || !isLoggedIn || _activityStore == null) return;
+    final bool expired = await checkIdleTimeout();
+    if (expired || _isDisposed || !isLoggedIn) return;
+    if (await _readPersistedActivity() == null && _lastActivityAt != null) {
+      _lastPersistedAt = _lastActivityAt;
+      await _persistLastActivity(_lastActivityAt!);
+    }
+  }
+
+  void recordUserActivity() {
+    if (_isDisposed || !isLoggedIn || _isExpiring) return;
+    final DateTime now = _clock().toUtc();
+    if (_lastActivityAt != null &&
+        isActivityExpired(
+          lastActivityUtc: _lastActivityAt!,
+          nowUtc: now,
+          idleTimeout: _idleTimeout,
+        )) {
+      unawaited(expireForInactivity());
+      return;
+    }
+    final Duration resetThrottle = _idleTimeout < const Duration(seconds: 5)
+        ? Duration.zero
+        : const Duration(seconds: 1);
+    if (_lastActivityAt != null &&
+        now.difference(_lastActivityAt!) < resetThrottle) {
+      return;
+    }
+    _lastActivityAt = now;
+    _scheduleIdleTimer(_idleTimeout);
+    if (_activityStore != null &&
+        (_lastPersistedAt == null ||
+            now.difference(_lastPersistedAt!) >= _activityPersistThrottle)) {
+      _lastPersistedAt = now;
+      unawaited(_persistLastActivity(now));
+    }
+  }
+
+  Future<void> flushActivityTimestamp() async {
+    if (_isDisposed ||
+        !isLoggedIn ||
+        _lastActivityAt == null ||
+        _activityStore == null) {
+      return;
+    }
+    _lastPersistedAt = _lastActivityAt;
+    await _persistLastActivity(_lastActivityAt!);
+  }
+
+  Future<bool> checkIdleTimeout() async {
+    if (_isDisposed || !isLoggedIn || _isExpiring) return false;
+    final DateTime now = _clock().toUtc();
+    DateTime? effectiveLast = _lastActivityAt;
+
+    if (effectiveLast != null &&
+        isActivityExpired(
+          lastActivityUtc: effectiveLast,
+          nowUtc: now,
+          idleTimeout: _idleTimeout,
+        )) {
+      await expireForInactivity();
+      return true;
+    }
+
+    if (_activityStore != null) {
+      String? raw;
+      try {
+        raw = await _activityStore.read(lastActivityStorageKey);
+      } catch (_) {
+        await expireForInactivity();
+        return true;
+      }
+      if (raw != null) {
+        final int? millis = int.tryParse(raw.trim());
+        if (millis == null) {
+          await expireForInactivity();
+          return true;
+        }
+        final DateTime persisted =
+            DateTime.fromMillisecondsSinceEpoch(millis, isUtc: true);
+        if (isActivityExpired(
+          lastActivityUtc: persisted,
+          nowUtc: now,
+          idleTimeout: _idleTimeout,
+        )) {
+          await expireForInactivity();
+          return true;
+        }
+        if (effectiveLast == null || persisted.isBefore(effectiveLast)) {
+          effectiveLast = persisted;
+        }
+      }
+    }
+
+    if (effectiveLast != null) {
+      _lastActivityAt = effectiveLast;
+      final Duration remaining = _idleTimeout - now.difference(effectiveLast);
+      _scheduleIdleTimer(remaining);
+    }
+    return false;
+  }
+
+  Future<void> expireForInactivity() async {
+    if (_isDisposed || _isExpiring || !isLoggedIn) return;
+    _isExpiring = true;
+    _cancelIdleTimer();
+    _sessionExpiredMessage = idleExpiredMessage;
+    try {
+      await signOut(clearExpiredMessage: false);
+    } finally {
+      _isExpiring = false;
+    }
+  }
 
   void _onAuthSessionChanged(AdminSessionUser? nextUser) {
     if (_isDisposed) return;
     if (nextUser == null) {
       final bool changed = _currentUser != null;
+      _cancelIdleTimer();
+      _lastActivityAt = null;
+      _lastPersistedAt = null;
       _currentUser = null;
       _repository.clearSensitiveCache();
+      unawaited(_clearPersistedActivity());
       if (changed) {
         notifyListeners();
       }
       return;
     }
     if (!nextUser.isAdmin) {
+      _cancelIdleTimer();
+      _lastActivityAt = null;
+      _lastPersistedAt = null;
       _currentUser = null;
       _repository.clearSensitiveCache();
+      unawaited(_clearPersistedActivity());
       notifyListeners();
       unawaited(_signOutQuietly());
       return;
@@ -50,6 +325,10 @@ class AdminSessionNotifier extends ChangeNotifier {
         _currentUser?.email != nextUser.email ||
         _currentUser?.role != nextUser.role) {
       _currentUser = nextUser;
+      if (_lastActivityAt == null) {
+        _lastActivityAt = _clock().toUtc();
+        _scheduleIdleTimer(_idleTimeout);
+      }
       notifyListeners();
     }
   }
@@ -63,20 +342,53 @@ class AdminSessionNotifier extends ChangeNotifier {
   }
 
   Future<void> initialize() async {
+    if (_activityStore != null && _currentUser != null) {
+      final bool expired = await enforcePersistedIdleTimeout(
+        repository: _repository,
+        store: _activityStore,
+        idleTimeout: _idleTimeout,
+        clock: _clock,
+      );
+      if (_isDisposed) return;
+      if (expired) {
+        _cancelIdleTimer();
+        _currentUser = null;
+        _lastActivityAt = null;
+        _lastPersistedAt = null;
+        _sessionExpiredMessage = idleExpiredMessage;
+        _repository.clearSensitiveCache();
+        notifyListeners();
+        return;
+      }
+    }
+
     try {
       final AdminSessionUser? verified =
           await _repository.ensureValidAdminSession();
       if (_isDisposed) return;
       if (verified == null || !verified.isAdmin) {
+        _cancelIdleTimer();
         _currentUser = null;
+        _lastActivityAt = null;
+        _lastPersistedAt = null;
         _repository.clearSensitiveCache();
+        unawaited(_clearPersistedActivity());
       } else {
         _currentUser = verified;
+        final DateTime now = _clock().toUtc();
+        _lastActivityAt ??= now;
+        final Duration remaining =
+            _idleTimeout - now.difference(_lastActivityAt!);
+        _scheduleIdleTimer(remaining);
       }
     } catch (_) {
       if (_isDisposed) return;
+      _cancelIdleTimer();
       _currentUser = null;
+      _lastActivityAt = null;
+      _lastPersistedAt = null;
       _repository.clearSensitiveCache();
+      unawaited(_clearPersistedActivity());
     } finally {
       if (!_isDisposed) {
         notifyListeners();
@@ -88,23 +400,36 @@ class AdminSessionNotifier extends ChangeNotifier {
     required String email,
     required String password,
   }) async {
+    _sessionExpiredMessage = null;
     final AdminSessionUser user = await _repository.signInAdmin(
       email: email,
       password: password,
     );
     if (!_isDisposed) {
       _currentUser = user;
+      final DateTime now = _clock().toUtc();
+      _lastActivityAt = now;
+      _lastPersistedAt = now;
+      _scheduleIdleTimer(_idleTimeout);
+      await _persistLastActivity(now);
       notifyListeners();
     }
     return user;
   }
 
-  Future<void> signOut() async {
+  Future<void> signOut({bool clearExpiredMessage = true}) async {
+    _cancelIdleTimer();
+    _lastActivityAt = null;
+    _lastPersistedAt = null;
+    if (clearExpiredMessage) {
+      _sessionExpiredMessage = null;
+    }
     try {
       await _repository.signOut();
     } catch (_) {
       // Tetap bersihkan state & cache meskipun panggilan logout jaringan gagal.
     } finally {
+      await _clearPersistedActivity();
       _currentUser = null;
       _repository.clearSensitiveCache();
       if (!_isDisposed) {
@@ -116,6 +441,7 @@ class AdminSessionNotifier extends ChangeNotifier {
   @override
   void dispose() {
     _isDisposed = true;
+    _cancelIdleTimer();
     unawaited(_authSubscription?.cancel());
     super.dispose();
   }
@@ -1800,6 +2126,11 @@ final Provider<AdminSessionNotifier> adminSessionProvider =
     Provider<AdminSessionNotifier>((Ref ref) {
   final AdminSessionNotifier notifier = AdminSessionNotifier(
     ref.watch(adminRepositoryProvider),
+    activityStore: EnvConfig.isSupabaseInitialized
+        ? const FlutterSecureKeyValueStore()
+        : null,
+    initialExpiredMessage:
+        AdminSessionNotifier.consumeColdStartExpiredMessage(),
   );
   ref.onDispose(notifier.dispose);
   return notifier;
