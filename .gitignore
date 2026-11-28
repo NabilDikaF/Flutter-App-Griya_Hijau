@@ -1,16 +1,11 @@
-# =============================================================================
-# Secrets, Environment & Signing Credentials
-# =============================================================================
 .env
 *.env
 .env.*
 supabase/.env*
-# Keep sanitized environment template tracked
 !.env.example
 
 **/local.properties
 **/key.properties
-# Keep Android signing property templates tracked
 !**/key.properties.example
 *.jks
 *.keystore
@@ -20,10 +15,6 @@ supabase/.env*
 google-services.json
 GoogleService-Info.plist
 
-# =============================================================================
-# Internal Documentation & AI/Agent Local Files
-# =============================================================================
-# Root-anchored so legitimate sub-package docs/ directories are not ignored
 /docs/
 /PRD/
 /prd/
