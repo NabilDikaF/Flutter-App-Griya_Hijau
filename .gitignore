@@ -34,9 +34,7 @@ mcp.json
 .windsurf/
 .aider*
 
-# =============================================================================
-# Flutter, Dart & Android Build / Generated Artifacts
-# =============================================================================
+
 **/doc/api/
 **/.dart_tool/
 **/.flutter-plugins*
@@ -58,7 +56,7 @@ app.*.map.json
 *.ipa
 *.ap_
 
-# Android / Gradle generated artifacts
+
 **/android/app/debug
 **/android/app/profile
 **/android/app/release
@@ -70,15 +68,11 @@ app.*.map.json
 **/android/gradlew.bat
 **/gradle-wrapper.jar
 
-# =============================================================================
-# Supabase Local CLI State
-# =============================================================================
+
 supabase/.temp/
 supabase/.branches/
 
-# =============================================================================
-# IDE, Editor & OS Files
-# =============================================================================
+
 *.iml
 *.ipr
 *.iws
